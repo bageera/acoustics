@@ -3,6 +3,31 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
+## [0.6.1] — 2026-10-27
+
+### Added
+
+- `docs/` directory: `docs/README.md` (index, conventions, reproduction rules)
+  and `docs/science.md` (the foundations document). science.md states the
+  founding invariants (exact reversibility, J(θ) description-length ranking,
+  the three-tier feasibility taxonomy), the model families, and the complete
+  measured record per milestone — v0.2 oscillator baselines, the P1–P4
+  phase-coherence decomposition (closed-loop > precision; 31,283 vs 40,526 B
+  vs PERIOD), the v0.4 integer-oscillator stability theorem (periods 3/4/6
+  only; damping structurally impossible), the honest P6 cascade tie, the F1–F3
+  feasibility findings (tier separation measured at n≈10; shuffle probe
+  cond₁ 2.22→3.39 bits; latent anchor-free win vs closed-loop truncation win),
+  and the v0.6 decidability result (strip-polygon emptiness proves zero
+  correction unavoidable for AR(2)-Q15 at n = 44,100 on the v0.5 fixture; the
+  Python experiment's 1,528 corrections attributed to its trig-table lattice).
+- Every number in science.md cites its committed test; all ten receipt tests
+  verified present in the tree (26 total). Reproduction is `cargo test
+  -- --nocapture <filter>`, never session memory.
+
+### Changed
+
+- No code or wire-format changes — docs-only commit.
+
 ## [0.6.0] — 2026-10-27
 
 ### Added

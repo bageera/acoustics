@@ -4,6 +4,11 @@
 
 A reversible audio-model codec research engine. Every payload decodes to the exact original samples; every experiment pays a measured, explicit information cost.
 
+The measured research record — foundations, per-milestone experiments, and the
+honest-results contract — lives in [docs/science.md](docs/science.md)
+(index: [docs/README.md](docs/README.md)); every number there cites a
+committed test that reproduces it.
+
 ## Status: v0.5 — feasibility geometry + description-length ranking (F1–F3)
 
 Implemented in Rust with **no external crate dependencies**.
