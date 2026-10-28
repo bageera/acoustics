@@ -10,6 +10,10 @@ use std::convert::TryFrom;
 mod cos_q13;
 use cos_q13::COSQ13;
 
+/// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
+/// and description-length ranking (work-order experiments F1-F3).
+pub mod feas;
+
 pub const MAGIC: &[u8; 8] = b"ACUSTCS1";
 pub const VERSION: u8 = 3;
 pub const MODEL_RAW: u8 = 0;
@@ -293,7 +297,7 @@ fn payload_len(kind: u8, param: usize, samples: &[i16]) -> Option<usize> {
 
 const OSC_Q15: i64 = 1 << 15;
 const OSC_Q30: i64 = 1 << 30;
-const OSC_ENVELOPE_MAX: i64 = 1 << 20; // reject unstable/blown dynamics
+pub(crate) const OSC_ENVELOPE_MAX: i64 = 1 << 20; // reject unstable/blown dynamics
 const OSC_VARIANT_COUNT: usize = 11;
 // ponytail: 3 cascade stages max; raise only if mixture measurement shows a gap
 const OSC_MAX_STAGES: usize = 3;
@@ -398,7 +402,7 @@ fn cos_lut(angle: u32) -> i64 {
 /// Least-squares fit of s[i] = C*s[i-1] - R*s[i-2] over an arbitrary i64 run
 /// (the cascade fits residuals, not just the original signal). Encode-side
 /// seed only; accumulators stay i64-safe for runs up to about 2^20 samples.
-fn osc_ls_fit_x(x: &[i64]) -> Option<(f64, f64)> {
+pub(crate) fn osc_ls_fit_x(x: &[i64]) -> Option<(f64, f64)> {
     if x.len() < 8 || x.len() > (1 << 20) {
         return None;
     }
@@ -434,7 +438,7 @@ fn osc_ls_fit(samples: &[i16]) -> Option<(f64, f64)> {
 /// Coefficient neighborhood around the LS seed: +-2 lattice steps on the grid.
 /// The rounded-LS (MSE) candidate is (di,dj) = (0,0) — always inside the set,
 /// which is what makes DL selection <= LS selection a structural guarantee.
-fn osc_coeff_candidates(c: f64, rr: f64, grid: u8) -> Vec<(i64, i64)> {
+pub(crate) fn osc_coeff_candidates(c: f64, rr: f64, grid: u8) -> Vec<(i64, i64)> {
     let q: i64 = if grid == 0 { OSC_Q15 } else { OSC_Q30 };
     let cw0 = (c * q as f64).round() as i64;
     let r20 = (rr.max(0.0) * q as f64).round() as i64;
@@ -451,7 +455,14 @@ fn osc_coeff_candidates(c: f64, rr: f64, grid: u8) -> Vec<(i64, i64)> {
 
 /// Open-loop recurrence (f0): y evolves from the coded seed state only.
 /// None = unusable (negative R or envelope escape).
-fn osc0_generate(y0: i64, y1: i64, cwq: i64, r2q: i64, q: i64, n: usize) -> Option<Vec<i64>> {
+pub(crate) fn osc0_generate(
+    y0: i64,
+    y1: i64,
+    cwq: i64,
+    r2q: i64,
+    q: i64,
+    n: usize,
+) -> Option<Vec<i64>> {
     if n < 2 || r2q < 0 {
         return None;
     }
@@ -494,7 +505,7 @@ fn deltas_bytes(deltas: &[i64]) -> usize {
 /// Predictions regenerate from *reconstructed* samples, so correction error
 /// cannot compound. First two samples are always coded (prediction
 /// nonexistent there); later samples coded iff delta nonzero.
-fn closed_plan(x: &[i64], cwq: i64, r2q: i64, q: i64) -> Option<(Vec<u32>, Vec<i64>)> {
+pub(crate) fn closed_plan(x: &[i64], cwq: i64, r2q: i64, q: i64) -> Option<(Vec<u32>, Vec<i64>)> {
     if r2q < 0 || x.len() < 2 {
         return None;
     }

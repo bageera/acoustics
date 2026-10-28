@@ -3,6 +3,58 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
+## [0.5.0] — 2026-10-27
+
+### Added
+
+- `feas` research module (wire format untouched): the work order's three
+  foundations implemented as measurement machinery.
+  - F1 rounding-cell feasibility: `fundamental_solutions` (u/v bases of the
+    recurrence), `real_feasible_region` (tier 1 — per-sample strips
+    x-1/2 <= a·u+b·v < x+1/2 intersected as half-planes), and
+    `decoder_feasible_search` (tier 2 — the only tier that matters: lattice
+    dynamics verified against the ACTUAL integer decoder arithmetic, ring
+    search with L0/L1 candidate generation). Three-outcome taxonomy
+    (real-valued / decoder-representable / infeasible) is now executable.
+  - F2 minimum-information instruments: `residual_stats` (empirical H0,
+    order-1 conditional entropy, binned-Laplace cross-entropy with
+    probabilities integrated over integer bins — never density-as-length),
+    and `j_cost` = L(M) + L(theta) + L_ideal(R). L0/L1 retained strictly as
+    candidate generators.
+  - F3 `latent_state_run` vs `closed_loop_residual` head-to-head under
+    identical cost accounting.
+- Tests F1a-F3 (+F2b): 6 research acceptance tests; suite 25.
+
+### Measured (research notes)
+
+- F1 tier separation is REAL: on the truncated-integer fixture
+  (C=64210, R=32000, div_euclid) ideal-f64 strip feasibility is EMPTY by
+  n≈10 (truncation drift breaks the linearity s=a·u+b·v), yet the shipped
+  closed-loop remains exact by construction. The work order's warning —
+  feasibility must be checked against the actual decoder, not the ideal
+  oscillator — is measured, not assumed.
+- F1 tier 1 works exactly where linearity holds: on the exact-evolving
+  undamped fixture (C=1, R=1) the feasible polygon is nonempty at n=600
+  with centroid at the true seed (4096, 8192), and the tier-2 ring search
+  recovers the generator exactly.
+- F2: H0 >= conditional entropy holds (instrument sanity); shuffling a
+  residual stream leaves H0 bit-identical while conditional entropy rises
+  2.22 -> 3.39 bits (temporal structure measured separately, as the work
+  order requires).
+- F3 head-to-head: on the exact-evolving fixture BOTH models hit zero
+  corrections — but the latent model needs NO bootstrap anchors (closed
+  loop always codes 2; latent 0): a measured anchor-free win for latent
+  state when the dynamics are exactly representable. On the truncated
+  fixture the latent ideal-state model drifts (L0=898, J=1706 bits) while
+  closed-loop holds at its 2 anchors (J=28): feedback wins exactly where
+  the arithmetic truncates. Neither direction is universal — matching the
+  work order's prediction.
+
+### Deferred
+
+- Multi-segment feasibility, real-audio corpora (speech/instruments),
+  nonlinear dynamics, spatial acoustic-field models.
+
 ## [0.4.0] — 2026-10-27
 
 ### Added
