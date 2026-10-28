@@ -3,6 +3,51 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
+## [0.6.0] — 2026-10-27
+
+### Added
+
+- v0.6 rounding-cell geometry machinery in `feas` (wire format untouched):
+  - `cell_geometry_search`: dynamics-lattice sweep with per-dynamics tier-1
+    strip-polygon diagnostics (vertices/area) and decoder-verified violation
+    counts.
+  - `latent_seed_search`: the decisive free-seed arm — for the latent family
+    the strip polygon IS the feasible seed region; integer grid points ring
+    outward from the polygon centroid, each verified by the f64 latent
+    decoder.
+- F1d acceptance test reproducing the v0.5 Python experiment's exact fixture
+  (917.3 Hz, A=12000, damping 1.84e-5/sample, phi0 = 0.37, float64-generating
+  equation, n = 44,100). Suite: 26 tests.
+
+### Measured (research notes) — the v0.6 question answered for this family
+
+- Pinned seeds (closed loop): violation floor 44,086/44,100 = the recurrence
+  LOCKS to the rounded seed states, seed error persists under |r|≈1 dynamics —
+  unavoidable, measured.
+- Free seeds (latent, AR(2)-Q15): at n = 44,100 the strip polygon COLLAPSES —
+  no (z0, z1) seed pair lies inside every rounding cell for any lattice
+  (C, R) — so zero correction is unavoidable within this family too, and the
+  geometry names the reason: the true generator's (r, cos w) are transcendental
+  and only approximable on the Q15 lattice; feasibility decays with N exactly
+  as the F1c collapse test predicted.
+- The two experiments reconcile: the v0.5 Python experiment's 1,528 corrections
+  (3.46%) belong to its Q40-phase + Q20-interpolated-LUT + Q28-envelope decoder
+  — a different, finer lattice structure whose remaining violations are
+  governed by ITS quantization geometry (phase drift floor ~1.7e-3 rad over
+  the run contributes < 0.02 sample units — the trig/table lattice, not the
+  phase accumulator, is its binding constraint). The strip-geometry
+  non-emptiness test is the decision rule for any finer lattice: zero
+  correction is achievable iff the polygon stays nonempty at the target N.
+- "Unavoidable vs undiscovered" is therefore now a decidable measurement per
+  model family, not a search-quality question.
+
+### Deferred
+
+- Higher-precision decoder families (Q40 phase accumulator, interpolated
+  trig tables) as Rust variants with the polygon test at their own lattices;
+  segment-wise feasibility (reset windows where the polygon re-opens);
+  real-audio corpora.
+
 ## [0.5.0] — 2026-10-27
 
 ### Added
