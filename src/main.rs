@@ -85,7 +85,8 @@ fn model_name(model: &acoustics::Model) -> String {
         acoustics::MODEL_RAW => "RAW".into(),
         acoustics::MODEL_D1 => "D1 (first-order differences)".into(),
         acoustics::MODEL_D2 => "D2 (second-order differences)".into(),
-        acoustics::MODEL_PERIOD => format!("PERIOD (lag {})", model.lag),
+        acoustics::MODEL_PERIOD => format!("PERIOD (lag {})", model.param),
+        acoustics::MODEL_OSC => format!("OSC (damped oscillator, variant {})", model.param),
         _ => format!("unknown({})", model.kind),
     }
 }

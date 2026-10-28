@@ -3,6 +3,42 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
+## [0.2.0] — 2026-10-27
+
+### Added
+
+- First physics-based model, `OSC` (kind 4): the damped-oscillator relation
+  `x(t) = A e^(-lambda t) cos(2 pi f t + phi)` encoded as **initial state + dynamics +
+  exact corrections** through its exact discrete recurrence
+  `y[i] = C*y[i-1] - R*y[i-2]` (C = 2r·cos w, R = r², w = 2πf/fs, r = e^(-lambda/fs)).
+  - All-integer Q15 fixed-point dynamics: encoder and decoder run bit-identical
+    recursions — float fits are used only at encode time for parameter estimation.
+  - Payload: initial state (y0, y1) as i16 pair; dynamics (R, C) as Q15 i32 pair;
+    corrections `x[i] - y[i]` under per-32-sample selection masks (PERIOD machinery).
+  - Least-squares fit of the recurrence over the run, five quantization variants
+    swept by the normal smallest-payload selection.
+  - Unstable/escaping dynamics (|y| > 2^20) rejected at decode; malformed OSC
+    parameters can never panic or produce runaway samples.
+- Model struct field renamed `lag` → `param` (PERIOD lag or OSC variant index);
+  payload version bumped to 2.
+- Tests: OSC selection + >8x compression on an integer-dynamics damped sinusoid;
+  OSC bad-parameter/unstable-dynamics rejection; metric==serialize extended to every
+  OSC variant. Suite now 12 tests.
+
+### Measured (research notes)
+
+- Integer-dynamics-generated signals: OSC wins by an order of magnitude (exact fit ⇒
+  corrections vanish; 10000 PCM bytes → <1250).
+- Float-generated damped sinusoid (fs/48, lambda = fs/8000): PERIOD lag 48 still wins
+  (~45.9% of PCM) over OSC — Q15 coefficient quantization accumulates phase drift
+  across the run and the correction stream carries it. Closing this gap is the v0.3
+  target: finer coefficient grids, per-segment re-fits, then coupled oscillators.
+
+### Deferred
+
+- Coupled oscillators / modal mixtures; nonlinear dynamics; geometric state spaces.
+- Stereo/multi-channel and higher bit depths; PERIOD lags > 96.
+
 ## [0.1.0] — 2026-10-27
 
 ### Added
