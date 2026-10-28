@@ -3,6 +3,57 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
+## [0.3.0] — 2026-10-27
+
+### Added
+
+- Phase-coherence investigations P1–P4 (v0.3 memo), all as OSC variants under the
+  existing smallest-complete-payload selection with PERIOD as control:
+  - P1 (precision): Q30 coefficient grid alongside Q15 — variant id is now
+    `family*2 + grid` (six variants; f0 open-loop, f1 closed-loop, f2 lattice).
+  - Closed-loop family f1: predictions regenerate from the *reconstructed* run, so
+    correction error cannot compound (limiting case of P3 re-anchoring: reset every
+    sample). Payload: (C, R) i32 pair; all n positions masked (bits 0–1 always coded).
+  - P2 (rational frequency): f2 phase-lattice synthesis — exact rational frequency
+    p/q on a lattice with q | 4096 (integer LUT angle, zero frequency-representation
+    error for lattice-native periods), baked Q15 quarter-wave cosine table
+    (`src/cos_q13.rs`, generated — no runtime float trig), Q15 envelope pow.
+  - P3 (segmentation): per-segment reset anchors every 2^(sel+5) samples; anchor
+    positions always coded; anchor-stride tradeoff curve exposed via
+    `research::f2_stride_curve`.
+  - P4 (description-length fitting): not a family — the plan search itself. LS seeds
+    a ±2-lattice-step neighborhood; the encoder evaluates the complete serialized
+    payload per candidate and keeps the smallest. The MSE-rounding candidate is always
+    in the sweep, so DL ≤ LS structurally; `research::p4_ls_vs_dl` measures the gap.
+- `research` module (public measurement surface): `osc_variant_costs`,
+  `period_control_cost`, `f2_stride_curve`, `p4_ls_vs_dl`, `synth_phase_lattice`.
+- Four research acceptance tests (P1 drift over 44k samples, P2 rational exact fit,
+  P3 anchor tradeoff, P4 LS-vs-DL) with per-variant exact-roundtrip assertions and
+  printed measurements. Suite: 16 tests.
+- Payload version bumped to 3 (v0.2 variant semantics changed); old-version payloads
+  decode-error cleanly.
+
+### Measured (research notes)
+
+- Float damped sinusoid, 44,100 samples (the fixture where v0.2 lost to PERIOD):
+  PERIOD control 40,526 B (45.9%); f0 Q15 85,700 B (97.2%); f0 Q30 75,918 B (86.1%);
+  **f1 closed-loop Q15 31,283 B (35.5%) — OSC now beats PERIOD**; f1 Q30 31,320 B.
+  Decomposition: finer grid (P1) bought ~10% on open-loop; closing the feedback loop
+  bought >3x (removes drift accumulation, not its increment). Q30 adds nothing once
+  closed-loop (residual gap ≈ 0), matching the drift model.
+- P2: f2-lattice-native tone (p=1/512, 6000 samples) → 783 B (6.5% of PCM),
+  corrections vanish on exact rational fits.
+- P3: anchor stride 64 beats no-anchor on the drift fixture (28,098 vs 28,531 B
+  refined); benefit decays with longer strides — full curve in the test output.
+- P4: DL ties LS on open-loop fixtures, saves 5 B on f1/Q15; DL ≤ LS holds everywhere.
+
+### Deferred
+
+- Coupled oscillators / mixtures (one partial per payload today); per-segment local
+  re-fits; exact discrete dynamics (reversible integer lattice transformations) as a
+  second modeling family; nonlinear dynamics; geometric state spaces.
+- Stereo/multi-channel and higher bit depths; PERIOD lags > 96.
+
 ## [0.2.0] — 2026-10-27
 
 ### Added

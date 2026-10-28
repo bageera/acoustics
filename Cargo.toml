@@ -1,8 +1,8 @@
 [package]
 name = "acoustics"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
-description = "ACOUSTICS - Mathematical & Physics-Informed Audio Research Engine (v0.2)"
+description = "ACOUSTICS - Mathematical & Physics-Informed Audio Research Engine (v0.3)"
 
 [[bin]]
 name = "acoustics"

@@ -1,12 +1,17 @@
-// ACOUSTICS Engine v0.2 — reversible audio-model codec baseline.
+// ACOUSTICS Engine v0.3 — reversible audio-model codec baseline.
 // Models: RAW (exact reference), D1 (first-order differences), D2 (second-order
 // differences), PERIOD (differences against earlier samples at candidate delays)
-// and OSC (damped-oscillator dynamics: initial state + dynamics + exact corrections).
+// and OSC (physics-based oscillator family: initial state + dynamics + exact
+// corrections; v0.3 adds closed-loop regeneration, finer dynamics grids, and
+// rational-frequency phase-lattice synthesis with segment re-anchoring).
 // Model selection = smallest complete serialized payload. Decode = exact.
 use std::convert::TryFrom;
 
+mod cos_q13;
+use cos_q13::COSQ13;
+
 pub const MAGIC: &[u8; 8] = b"ACUSTCS1";
-pub const VERSION: u8 = 2;
+pub const VERSION: u8 = 3;
 pub const MODEL_RAW: u8 = 0;
 pub const MODEL_D1: u8 = 1;
 pub const MODEL_D2: u8 = 2;
@@ -160,7 +165,7 @@ pub fn write_wav(sample_rate: u32, samples: &[i16]) -> Result<Vec<u8>, String> {
 
 // ---------- models ----------
 
-/// Selected model: kind + parameter (PERIOD lag, or OSC variant index).
+/// Selected model: kind + parameter (PERIOD lag, or OSC variant id).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Model {
     pub kind: u8,
@@ -248,47 +253,85 @@ fn payload_len(kind: u8, param: usize, samples: &[i16]) -> Option<usize> {
     })
 }
 
-// ---------- oscillator model (v0.2: physics-based representation) ----------
+// ===================== OSC family (P1-P4 experiments) =====================
 //
-// Discrete damped oscillator recursed exactly in fixed point:
-//   y[i] = C*y[i-1] - R*y[i-2],  C = 2r*cos(w) (Q15), R = r^2 (Q15)
-// The continuous x(t) = A e^(-lambda t) cos(2 pi f t + phi) sampled at rate fs
-// satisfies this recurrence with r = e^(-lambda/fs), w = 2 pi f/fs.
-// Payload = initial state (y0,y1) + dynamics (R,C) + corrections x[i]-y[i]
-// under per-32-sample selection masks (same machinery as PERIOD).
-// All-integer dynamics: encoder and decoder run bit-identical recursions —
-// a float fit would make exact reversibility impossible.
+// v0.2 established: the open-loop recurrence is exactly reversible but Q15
+// coefficient quantization accumulates phase drift whose correction stream
+// can cost more than PERIOD (measured: PERIOD lag 48 won at 45.9% of PCM on a
+// float-generated damped sinusoid). v0.3 attacks that measured weakness with
+// three families under the same smallest-payload rule, PERIOD as control:
+//
+//   f0  open-loop recurrence y[i] = (C*y[i-1] - R*y[i-2]) >> q  (v0.2; drift
+//       compounds through generated values)
+//   f1  closed-loop recurrence y[i] = (C*rec[i-1] - R*rec[i-2]) >> q where
+//       rec = the *reconstructed* run: correction information feeds the next
+//       prediction, so error cannot compound (per-position truncation only)
+//   f2  phase-lattice synthesis: exact rational frequency p/q on a lattice
+//       with q | 4096 (LUT angle is an exact integer — zero frequency-
+//       representation error for lattice-native periods), quarter-wave cosine
+//       LUT, Q15 envelope pow with per-segment reset anchors (P3)
+//
+// grid bit: 0 = Q15 coefficient lattice, 1 = Q30 (P1: 2^15x finer dynamics
+// resolution). Variant id = family*2 + grid, ids 0..6:
+//   0 f0/Q15 (v0.2 control)   1 f0/Q30   2 f1/Q15   3 f1/Q30
+//   4 f2 coarse sweep         5 f2 refined sweep
+//
+// P4 (description-length fitting) is not a family — it is the plan search
+// itself: least squares seeds a coefficient neighborhood; the encoder
+// evaluates the COMPLETE serialized payload L(fields) + L(masks) + L(deltas)
+// for every candidate and the smallest wins. The MSE-rounding candidate is
+// always inside the sweep set, so DL selection <= LS selection by construction.
+//
+// All synthesis/decoding arithmetic is pure integer (Q15 quarter-wave LUT,
+// integer phase accumulator): encoder and decoder evaluate bit-identically.
 
-const OSC_Q: i64 = 1 << 15;
-const OSC_VARIANT_COUNT: usize = 5;
-const OSC_ENVELOPE_MAX: i64 = 1 << 20; // reject unstable/blown variants
+const OSC_Q15: i64 = 1 << 15;
+const OSC_Q30: i64 = 1 << 30;
+const OSC_ENVELOPE_MAX: i64 = 1 << 20; // reject unstable/blown dynamics
+const OSC_VARIANT_COUNT: usize = 6;
 
-/// Run the oscillator recurrence. None = dynamics unusable (negative R, or the
-/// state escapes the audio envelope, i.e. a useless/unstable variant).
-fn osc_generate(y0: i64, y1: i64, r2q: i64, cwq: i64, n: usize) -> Option<Vec<i64>> {
-    if n < 2 || r2q < 0 {
-        return None;
-    }
-    let mut y = vec![0i64; n];
-    y[0] = y0;
-    y[1] = y1;
-    for i in 2..n {
-        let v = (y[i - 1] * cwq - y[i - 2] * r2q).div_euclid(OSC_Q);
-        if v.abs() > OSC_ENVELOPE_MAX {
-            return None;
-        }
-        y[i] = v;
-    }
-    Some(y)
+pub(crate) fn osc_variant_family(variant: usize) -> usize {
+    variant / 2
 }
 
-type OscParams = (i64, i64, i64, i64); // (y0, y1, r2q, cwq)
+pub(crate) fn osc_variant_grid(variant: usize) -> u8 {
+    (variant % 2) as u8
+}
 
-/// Least-squares fit of s[i] = C*s[i-1] - R*s[i-2] over the sample run, then
-/// Q15 quantization with a variant-indexed jitter on R (so model selection can
-/// pick the cheapest of a few nearby dynamics). Deterministic; floats only here.
-fn osc_fit(samples: &[i16], variant: usize) -> Option<OscParams> {
-    if samples.len() < 8 || variant >= OSC_VARIANT_COUNT {
+pub(crate) fn osc_variant_name(variant: usize) -> &'static str {
+    match variant {
+        0 => "f0 open-loop recurrence Q15 (v0.2 control)",
+        1 => "f0 open-loop recurrence Q30 (P1)",
+        2 => "f1 closed-loop recurrence Q15",
+        3 => "f1 closed-loop recurrence Q30 (P1)",
+        4 => "f2 phase-lattice synthesis coarse (P2/P3)",
+        5 => "f2 phase-lattice synthesis refined (P2/P3)",
+        _ => "unknown",
+    }
+}
+
+/// Quarter-wave LUT lookup: 12-bit angle (2*pi = 4096) -> Q15 cosine.
+/// Table covers quadrant [0, pi/2]; other quadrants mirror into it:
+///   quad 0: cos(a)            = +T[a]
+///   quad 1: cos(pi - a')      = -T[2048 - a]   (a in [1024, 2048))
+///   quad 2: cos(a - pi) negated = -T[a - 2048]
+///   quad 3: cos(2pi - a)      = +T[4096 - a]
+fn cos_lut(angle: u32) -> i64 {
+    debug_assert!(angle < 4096);
+    let quad = angle >> 10;
+    let c: i64 = match quad {
+        0 => COSQ13[angle as usize] as i64,
+        1 => -(COSQ13[(2048 - angle) as usize] as i64),
+        2 => -(COSQ13[(angle - 2048) as usize] as i64),
+        _ => COSQ13[(4096 - angle) as usize] as i64,
+    };
+    c
+}
+
+/// Least-squares fit of s[i] = C*s[i-1] - R*s[i-2] (encode-side seed only;
+/// all cross-products in f64, accumulators stay i64-safe).
+fn osc_ls_fit(samples: &[i16]) -> Option<(f64, f64)> {
+    if samples.len() < 8 {
         return None;
     }
     let mut saa = 0i64;
@@ -304,63 +347,459 @@ fn osc_fit(samples: &[i16], variant: usize) -> Option<OscParams> {
         sar += s1 * s2;
         sbr -= s0 * s2;
     }
-    // normal equations [[A,B],[B,D]] [C,R]^T = [rhs1,rhs2]^T (solved in f64)
     let (a, b, d, rhs1, rhs2) = (saa as f64, sab as f64, sbb as f64, sar as f64, sbr as f64);
     let det = a * d - b * b;
     if det <= 0.0 || det.is_nan() {
-        return None; // degenerate (silence, DC, linear ramp): not oscillator-like
+        return None; // degenerate (silence, DC, ramp): not oscillator-like
     }
-    let c = (d * rhs1 - b * rhs2) / det; // C = 2r*cos(w)
+    let c = (d * rhs1 - b * rhs2) / det; // C = 2r cos w
     let rr = (a * rhs2 - b * rhs1) / det; // R = r^2
-    let jitter: i64 = match variant {
-        0 => 0,
-        1 => 1,
-        2 => -1,
-        3 => 2,
-        _ => -2,
-    };
-    let cwq = ((c * (OSC_Q as f64)).round() as i64).clamp(-2 * OSC_Q, 2 * OSC_Q);
-    let r2q = (((rr * (OSC_Q as f64)).round() as i64) + jitter).clamp(0, 2 * OSC_Q);
-    let params: OscParams = (samples[0] as i64, samples[1] as i64, r2q, cwq);
-    // reject variants whose dynamics escape the envelope before sizing them
-    osc_generate(params.0, params.1, params.2, params.3, samples.len())?;
-    Some(params)
+    Some((c, rr))
+}
+
+/// Coefficient neighborhood around the LS seed: +-2 lattice steps on the grid.
+/// The rounded-LS (MSE) candidate is (di,dj) = (0,0) — always inside the set,
+/// which is what makes DL selection <= LS selection a structural guarantee.
+fn osc_coeff_candidates(c: f64, rr: f64, grid: u8) -> Vec<(i64, i64)> {
+    let q: i64 = if grid == 0 { OSC_Q15 } else { OSC_Q30 };
+    let cw0 = (c * q as f64).round() as i64;
+    let r20 = (rr.max(0.0) * q as f64).round() as i64;
+    let mut out = Vec::with_capacity(25);
+    for di in [-2i64, -1, 0, 1, 2] {
+        for dj in [-2i64, -1, 0, 1, 2] {
+            let r2 = (r20 + di).clamp(0, 2 * q - 1);
+            let cw = (cw0 + dj).clamp(-(2 * q - 1), 2 * q - 1);
+            out.push((cw, r2));
+        }
+    }
+    out
+}
+
+/// Open-loop recurrence (f0): y evolves from the coded seed state only.
+/// None = unusable (negative R or envelope escape).
+fn osc0_generate(y0: i64, y1: i64, cwq: i64, r2q: i64, q: i64, n: usize) -> Option<Vec<i64>> {
+    if n < 2 || r2q < 0 {
+        return None;
+    }
+    let mut y = vec![0i64; n];
+    y[0] = y0;
+    y[1] = y1;
+    for i in 2..n {
+        let v = (y[i - 1] * cwq - y[i - 2] * r2q).div_euclid(q);
+        if v.abs() > OSC_ENVELOPE_MAX {
+            return None;
+        }
+        y[i] = v;
+    }
+    Some(y)
 }
 
 /// Corrections on positions base..len under selection masks: bit k covers
 /// position base+k. Bit set = correction nonzero and coded; clear = zero.
-fn plan_corrections(x: &[i64], y: &[i64], base: usize) -> Vec<u32> {
+/// Returns (masks, deltas in emission order).
+fn plan_corrections_masked(x: &[i64], y: &[i64], base: usize) -> (Vec<u32>, Vec<i64>) {
     let mut masks = vec![0u32; (x.len() - base).div_ceil(32)];
+    let mut deltas = Vec::new();
     for (k, i) in (base..x.len()).enumerate() {
-        if x[i] - y[i] != 0 {
+        let d = x[i] - y[i];
+        if d != 0 {
             masks[k / 32] |= 1 << (k % 32);
+            deltas.push(d);
         }
     }
-    masks
+    (masks, deltas)
 }
 
-fn correction_len(x: &[i64], y: &[i64], base: usize, masks: &[u32]) -> usize {
-    (base..x.len())
-        .filter(|&i| masks[(i - base) / 32] & (1 << ((i - base) % 32)) != 0)
-        .map(|i| varint_len(zigzag_encode(x[i] - y[i])))
-        .sum()
+fn deltas_bytes(deltas: &[i64]) -> usize {
+    deltas.iter().map(|&d| varint_len(zigzag_encode(d))).sum()
+}
+
+// ---------- f1: closed-loop plan ----------
+
+/// f1 plan: predictions regenerate from *reconstructed* samples each step, so
+/// correction error cannot compound. First two samples are always coded
+/// (prediction nonexistent there); later samples coded iff delta nonzero.
+fn osc1_plan(x: &[i64], cwq: i64, r2q: i64, q: i64) -> Option<(Vec<u32>, Vec<i64>)> {
+    if r2q < 0 || x.len() < 2 {
+        return None;
+    }
+    let n = x.len();
+    let mut masks = vec![0u32; n.div_ceil(32)];
+    let mut deltas = Vec::new();
+    let mut p1 = 0i64; // reconstructed x[i-1]
+    let mut p2 = 0i64; // reconstructed x[i-2]
+    for i in 0..n {
+        let pred = if i < 2 {
+            0
+        } else {
+            let v = (p1 * cwq - p2 * r2q).div_euclid(q);
+            if v.abs() > OSC_ENVELOPE_MAX {
+                return None;
+            }
+            v
+        };
+        let d = x[i] - pred;
+        if i < 2 || d != 0 {
+            masks[i / 32] |= 1 << (i % 32);
+            deltas.push(d);
+        }
+        p2 = p1;
+        p1 = x[i]; // reconstructed == exact by construction
+    }
+    Some((masks, deltas))
+}
+
+// ---------- f2: phase-lattice synthesis ----------
+
+/// Open-loop synthesis on an integer phase lattice (P2) with Q15 envelope pow
+/// and reset anchors (P3). All-integer; decoder replays this exact function.
+///   position = (phi0 + local*p) mod q, local = i - segment start
+///   angle    = position * 4096 / q   (exact; requires q | 4096)
+///   env      = Q15, multiplied by rq>>15 every `env_shift` samples since the
+///              segment start (env_shift 0 = constant envelope)
+///   anchors  = every (1 << (stride_sel+5)) samples: segment restart, envelope
+///              resets to Q15 (stride_sel 0 = no anchors)
+///   y[i]     = (amp * cos_lut(angle) * env) >> 30
+#[allow(clippy::too_many_arguments)]
+fn osc2_synth(
+    amp: i64,
+    rq: i64,
+    p: u64,
+    q: u64,
+    phi0: u64,
+    env_shift: u32,
+    stride_shift: u32,
+    n: usize,
+) -> Vec<i64> {
+    let mut y = vec![0i64; n];
+    let mut seg_start = 0usize;
+    let mut env = OSC_Q15;
+    let stride_mask: u64 = if stride_shift == 0 {
+        0
+    } else {
+        (1u64 << stride_shift) - 1
+    };
+    let env_mask: u64 = if env_shift == 0 {
+        0
+    } else {
+        (1u64 << env_shift) - 1
+    };
+    for (i, yv) in y.iter_mut().enumerate() {
+        let iu = i as u64;
+        if stride_mask != 0 && iu != 0 && iu & stride_mask == 0 {
+            seg_start = i;
+            env = OSC_Q15; // P3 anchor: amplitude state restarts here
+        }
+        let local = iu - seg_start as u64;
+        if env_mask != 0 && local != 0 && local & env_mask == 0 {
+            env = (env * rq) >> 15;
+        }
+        let pos = (phi0 + local * p) % q;
+        let angle = (pos * 4096 / q) as u32;
+        *yv = (amp * cos_lut(angle) * env) >> 30;
+    }
+    y
+}
+
+#[derive(Clone, Copy)]
+struct F2Seed {
+    amp: i64,
+    rq: i64,
+    p: u64,
+    q: u64,
+    phi0: u64,
+}
+
+/// Seed f2 candidates from the LS fit across lattice sizes q | 4096, with
+/// p and phi0 jitter. Coarse/refined variants differ in jitter spans.
+fn osc2_fit_candidates(samples: &[i16], refined: bool) -> Vec<F2Seed> {
+    let Some((c, rr)) = osc_ls_fit(samples) else {
+        return Vec::new();
+    };
+    if rr <= 0.0 {
+        return Vec::new();
+    }
+    let r = rr.sqrt().clamp(0.0, 0.999_999);
+    let theta = (c / (2.0 * r)).clamp(-1.0, 1.0).acos();
+    if theta <= 1e-9 {
+        return Vec::new(); // period infinite: unusable
+    }
+    let period = 2.0 * std::f64::consts::PI / theta;
+    let maxabs = samples
+        .iter()
+        .map(|s| s.unsigned_abs() as i64)
+        .max()
+        .unwrap_or(0);
+    if maxabs == 0 {
+        return Vec::new();
+    }
+    // phase from first sample: x0/maxabs = cos(theta0); slope picks the branch
+    let ratio = (samples[0].unsigned_abs() as f64 / maxabs as f64).clamp(-1.0, 1.0);
+    let slope_up = samples[1] >= samples[0];
+    let mut angle0 = ((ratio.acos() / (2.0 * std::f64::consts::PI)) * 4096.0).round() as i64;
+    if !slope_up {
+        angle0 = 4096 - angle0; // descending through x0: mirrored branch
+    }
+    let _ = slope_up;
+    let amp = maxabs;
+    let rq = (r * OSC_Q15 as f64).round() as i64;
+    let qs: [u64; 4] = [512, 1024, 2048, 4096];
+    let (dp_span, dphi_span): (i64, i64) = if refined { (1, 4) } else { (0, 2) };
+    let mut out = Vec::new();
+    for &q in &qs {
+        let p0 = (((q as f64) / period).round() as i64).max(1);
+        let phi_centre = (angle0 * q as i64 / 4096).rem_euclid(q as i64);
+        for dp in -dp_span..=dp_span {
+            let p = (p0 + dp).max(1) as u64;
+            for dphi in -dphi_span..=dphi_span {
+                let phi0 = (phi_centre + dphi).rem_euclid(q as i64) as u64;
+                out.push(F2Seed {
+                    amp,
+                    rq,
+                    p,
+                    q,
+                    phi0,
+                });
+            }
+        }
+    }
+    out
+}
+
+/// Anchor strides tried for f2 (P3): sel 0 = none, sel k >= 1 = 1 << (k+5).
+const F2_STRIDE_SELS: [u32; 7] = [0, 1, 2, 3, 4, 5, 6]; // none,64..2048
+
+fn f2_stride_shift(sel: u32) -> u32 {
+    if sel == 0 {
+        0
+    } else {
+        sel + 5
+    }
+}
+
+const F2_ENV_SELS: [u32; 4] = [0, 8, 9, 10]; // envelope shift (0 = constant)
+
+/// The complete plan for one OSC variant: fields, predicted stream, masks,
+/// deltas, and the exact serialized cost (P4 metric = whole payload).
+struct OscPlan {
+    cost: usize,
+    // f0/f1 fields
+    y0: i64,
+    y1: i64,
+    cwq: i64,
+    r2q: i64,
+    // f2 fields
+    amp: i64,
+    rq: i64,
+    p: u64,
+    q: u64,
+    phi0: u64,
+    env_sel: u32,
+    stride_sel: u32,
+    // emission
+    masks: Vec<u32>,
+    deltas: Vec<i64>,
+}
+
+/// Build the best plan for `variant` under the DL criterion (P4).
+fn osc_plan(samples: &[i16], variant: usize) -> Option<OscPlan> {
+    if samples.len() < 2 {
+        return None;
+    }
+    let family = osc_variant_family(variant);
+    let grid = osc_variant_grid(variant);
+    let n = samples.len();
+    let x: Vec<i64> = samples.iter().map(|&s| s as i64).collect();
+    let variant_varint = varint_len(variant as u64);
+    match family {
+        0 => {
+            let q: i64 = if grid == 0 { OSC_Q15 } else { OSC_Q30 };
+            let (c, rr) = osc_ls_fit(samples)?;
+            let mut best: Option<OscPlan> = None;
+            for (cwq, r2q) in osc_coeff_candidates(c, rr, grid) {
+                let Some(pred) = osc0_generate(x[0], x[1], cwq, r2q, q, n) else {
+                    continue;
+                };
+                let (masks, deltas) = plan_corrections_masked(&x, &pred, 2);
+                let cost = header_len(n)
+                    + variant_varint
+                    + 12 // y0,y1 (i16 x2) + cwq,r2q (i32 x2)
+                    + masks.len() * 4
+                    + deltas_bytes(&deltas);
+                if best.as_ref().is_none_or(|b| cost < b.cost) {
+                    best = Some(OscPlan {
+                        cost,
+                        y0: x[0],
+                        y1: x[1],
+                        cwq,
+                        r2q,
+                        amp: 0,
+                        rq: 0,
+                        p: 0,
+                        q: 0,
+                        phi0: 0,
+                        env_sel: 0,
+                        stride_sel: 0,
+                        masks,
+                        deltas,
+                    });
+                }
+            }
+            best
+        }
+        1 => {
+            let q: i64 = if grid == 0 { OSC_Q15 } else { OSC_Q30 };
+            let (c, rr) = osc_ls_fit(samples)?;
+            let mut best: Option<OscPlan> = None;
+            for (cwq, r2q) in osc_coeff_candidates(c, rr, grid) {
+                let Some((masks, deltas)) = osc1_plan(&x, cwq, r2q, q) else {
+                    continue;
+                };
+                let cost = header_len(n)
+                    + variant_varint
+                    + 8 // cwq,r2q (i32 x2)
+                    + masks.len() * 4
+                    + deltas_bytes(&deltas);
+                if best.as_ref().is_none_or(|b| cost < b.cost) {
+                    best = Some(OscPlan {
+                        cost,
+                        y0: 0,
+                        y1: 0,
+                        cwq,
+                        r2q,
+                        amp: 0,
+                        rq: 0,
+                        p: 0,
+                        q: 0,
+                        phi0: 0,
+                        env_sel: 0,
+                        stride_sel: 0,
+                        masks,
+                        deltas,
+                    });
+                }
+            }
+            best
+        }
+        2 => {
+            if n < 8 {
+                return None;
+            }
+            let refined = grid == 1;
+            // stage 1: best (no anchors) candidate by true payload cost
+            let env_sels: &[u32] = if refined { &F2_ENV_SELS } else { &[0, 9] };
+            let mut best1: Option<(F2Seed, u32, usize)> = None; // (seed, env_sel, cost)
+            for cand in osc2_fit_candidates(samples, refined) {
+                for &env_sel in env_sels {
+                    let pred =
+                        osc2_synth(cand.amp, cand.rq, cand.p, cand.q, cand.phi0, env_sel, 0, n);
+                    let (masks, deltas) = plan_corrections_masked(&x, &pred, 0);
+                    let cost = header_len(n)
+                        + variant_varint
+                        + 8 // amp, rq (i32 x2)
+                        + varint_len(cand.p)
+                        + varint_len(cand.q)
+                        + varint_len(cand.phi0)
+                        + varint_len(env_sel as u64)
+                        + varint_len(0) // stride_sel
+                        + masks.len() * 4
+                        + deltas_bytes(&deltas);
+                    if best1.is_none_or(|(_, _, c)| cost < c) {
+                        best1 = Some((cand, env_sel, cost));
+                    }
+                }
+            }
+            let (seed, env_sel, _) = best1?;
+            // stage 2: anchor strides for the stage-1 winner (P3 tradeoff)
+            let mut best2: Option<(u32, OscPlan)> = None;
+            let stride_choices: &[u32] = if refined {
+                &F2_STRIDE_SELS
+            } else {
+                // ponytail: coarse variant keeps the full curve; refine later if
+                // P3 measurement shows the coarse/curves diverging
+                &F2_STRIDE_SELS
+            };
+            for &sel in stride_choices {
+                let shift = f2_stride_shift(sel);
+                let pred = osc2_synth(
+                    seed.amp, seed.rq, seed.p, seed.q, seed.phi0, env_sel, shift, n,
+                );
+                let (masks, deltas) = plan_corrections_masked(&x, &pred, 0);
+                let cost = header_len(n)
+                    + variant_varint
+                    + 8
+                    + varint_len(seed.p)
+                    + varint_len(seed.q)
+                    + varint_len(seed.phi0)
+                    + varint_len(env_sel as u64)
+                    + varint_len(sel as u64)
+                    + masks.len() * 4
+                    + deltas_bytes(&deltas);
+                if best2.as_ref().is_none_or(|(_, b)| cost < b.cost) {
+                    best2 = Some((
+                        sel,
+                        OscPlan {
+                            cost,
+                            y0: 0,
+                            y1: 0,
+                            cwq: 0,
+                            r2q: 0,
+                            amp: seed.amp,
+                            rq: seed.rq,
+                            p: seed.p,
+                            q: seed.q,
+                            phi0: seed.phi0,
+                            env_sel,
+                            stride_sel: sel,
+                            masks,
+                            deltas,
+                        },
+                    ));
+                }
+            }
+            best2.map(|(_, plan)| plan)
+        }
+        _ => None,
+    }
 }
 
 /// Exact serialized size for an OSC payload with the given variant (metric).
 fn osc_payload_len(samples: &[i16], variant: usize) -> Option<usize> {
-    let (y0, y1, r2q, cwq) = osc_fit(samples, variant)?;
-    let y = osc_generate(y0, y1, r2q, cwq, samples.len())?;
-    let x64: Vec<i64> = samples.iter().map(|&s| s as i64).collect();
-    let masks = plan_corrections(&x64, &y, 2);
-    let tail_bytes = correction_len(&x64, &y, 2, &masks);
-    Some(
-        header_len(samples.len())
-            + varint_len(variant as u64)
-            + 4 // y0, y1 (i16 each)
-            + 8 // r2q, cwq (i32 each)
-            + masks.len() * 4
-            + tail_bytes,
-    )
+    Some(osc_plan(samples, variant)?.cost)
+}
+
+fn serialize_osc(variant: usize, out: &mut Vec<u8>, samples: &[i16]) -> Result<(), String> {
+    let plan = osc_plan(samples, variant).ok_or(ERR_TRUNCATED)?;
+    let family = osc_variant_family(variant);
+    write_varint(out, variant as u64);
+    match family {
+        0 => {
+            out.extend_from_slice(&(plan.y0 as i16).to_le_bytes());
+            out.extend_from_slice(&(plan.y1 as i16).to_le_bytes());
+            out.extend_from_slice(&(plan.cwq as i32).to_le_bytes());
+            out.extend_from_slice(&(plan.r2q as i32).to_le_bytes());
+        }
+        1 => {
+            out.extend_from_slice(&(plan.cwq as i32).to_le_bytes());
+            out.extend_from_slice(&(plan.r2q as i32).to_le_bytes());
+        }
+        _ => {
+            out.extend_from_slice(&(plan.amp as i32).to_le_bytes());
+            out.extend_from_slice(&(plan.rq as i32).to_le_bytes());
+            write_varint(out, plan.p);
+            write_varint(out, plan.q);
+            write_varint(out, plan.phi0);
+            write_varint(out, plan.env_sel as u64);
+            write_varint(out, plan.stride_sel as u64);
+        }
+    }
+    for &m in &plan.masks {
+        out.extend_from_slice(&m.to_le_bytes());
+    }
+    for &d in &plan.deltas {
+        write_varint(out, zigzag_encode(d));
+    }
+    Ok(())
 }
 
 fn choose_model(samples: &[i16]) -> Model {
@@ -389,7 +828,6 @@ fn choose_model(samples: &[i16]) -> Model {
             }
         }
     }
-    // physics candidates: damped-oscillator dynamics, a handful of quantizations
     for v in 0..OSC_VARIANT_COUNT {
         if let Some(n) = osc_payload_len(samples, v) {
             if n < best_len {
@@ -428,25 +866,7 @@ fn serialize(model: Model, sample_rate: u32, samples: &[i16]) -> Result<Vec<u8>,
                 }
             }
         }
-        MODEL_OSC => {
-            let (y0, y1, r2q, cwq) = osc_fit(samples, model.param).ok_or(ERR_TRUNCATED)?;
-            write_varint(&mut out, model.param as u64);
-            out.extend_from_slice(&(y0 as i16).to_le_bytes());
-            out.extend_from_slice(&(y1 as i16).to_le_bytes());
-            out.extend_from_slice(&(r2q as i32).to_le_bytes());
-            out.extend_from_slice(&(cwq as i32).to_le_bytes());
-            let y = osc_generate(y0, y1, r2q, cwq, samples.len()).ok_or(ERR_TRUNCATED)?;
-            let x64: Vec<i64> = samples.iter().map(|&s| s as i64).collect();
-            let masks = plan_corrections(&x64, &y, 2);
-            for &m in &masks {
-                out.extend_from_slice(&m.to_le_bytes());
-            }
-            for (k, i) in (2..samples.len()).enumerate() {
-                if masks[k / 32] & (1 << (k % 32)) != 0 {
-                    write_varint(&mut out, zigzag_encode(x64[i] - y[i]));
-                }
-            }
-        }
+        MODEL_OSC => serialize_osc(model.param, &mut out, samples)?,
         _ => {
             for r in predictor_residuals(samples, model.kind) {
                 write_varint(&mut out, zigzag_encode(r));
@@ -476,7 +896,6 @@ fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
     if count == 0 {
         return Err(ERR_EMPTY.into());
     }
-    // PERIOD reads a lag; OSC reads a variant — both a single varint param
     let mut param = 0usize;
     if kind == MODEL_PERIOD || kind == MODEL_OSC {
         param = read_varint(payload, &mut pos)? as usize;
@@ -507,7 +926,6 @@ fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
             }
             for i in lag..count {
                 let used = masks[(i - lag) / 32] & (1 << ((i - lag) % 32)) != 0;
-                // mask clear = zero residual; encoder wrote no varint for it
                 let value = if used {
                     let z = read_varint(payload, &mut pos)?;
                     zigzag_decode(z) + prev[i - lag]
@@ -519,37 +937,7 @@ fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
                 prev.push(value);
             }
         }
-        MODEL_OSC => {
-            let hdr: [u8; 12] = payload
-                .get(pos..pos + 12)
-                .ok_or(ERR_TRUNCATED)?
-                .try_into()
-                .unwrap();
-            pos += 12;
-            let y0 = i16::from_le_bytes(hdr[0..2].try_into().unwrap()) as i64;
-            let y1 = i16::from_le_bytes(hdr[2..4].try_into().unwrap()) as i64;
-            let r2q = i32::from_le_bytes(hdr[4..8].try_into().unwrap()) as i64;
-            let cwq = i32::from_le_bytes(hdr[8..12].try_into().unwrap()) as i64;
-            let y = osc_generate(y0, y1, r2q, cwq, count)
-                .ok_or("OSC dynamics unstable or out of envelope")?;
-            let mask_len = (count - 2).div_ceil(32);
-            let mut masks = Vec::with_capacity(mask_len);
-            for _ in 0..mask_len {
-                let b = payload.get(pos..pos + 4).ok_or(ERR_TRUNCATED)?;
-                masks.push(u32::from_le_bytes(b.try_into().unwrap()));
-                pos += 4;
-            }
-            let mut x = y;
-            for (k, i) in (2..count).enumerate() {
-                if masks[k / 32] & (1 << (k % 32)) != 0 {
-                    let d = zigzag_decode(read_varint(payload, &mut pos)?);
-                    x[i] += d;
-                }
-            }
-            for v in x {
-                samples.push(i16_from_i64(v)?);
-            }
-        }
+        MODEL_OSC => decode_osc(payload, &mut pos, count, param, &mut samples)?,
         MODEL_D1 => {
             let mut last: Option<i64> = None;
             for _ in 0..count {
@@ -590,6 +978,156 @@ fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
     Ok((sample_rate, samples, Model { kind, param }))
 }
 
+/// Decode an OSC body: read fields, masks, then deltas; reconstruct exactly.
+fn decode_osc(
+    payload: &[u8],
+    pos: &mut usize,
+    count: usize,
+    variant: usize,
+    samples: &mut Vec<i16>,
+) -> Result<(), String> {
+    let family = osc_variant_family(variant);
+    let grid = osc_variant_grid(variant);
+    let q: i64 = if grid == 0 { OSC_Q15 } else { OSC_Q30 };
+    // fields
+    let (mut y0, mut y1) = (0i64, 0i64);
+    let (cwq, r2q, amp, rq, p, qf, phi0, env_sel, stride_sel);
+    match family {
+        0 => {
+            let hdr: [u8; 12] = payload
+                .get(*pos..*pos + 12)
+                .ok_or(ERR_TRUNCATED)?
+                .try_into()
+                .map_err(|_| ERR_TRUNCATED)?;
+            *pos += 12;
+            y0 = i16::from_le_bytes(hdr[0..2].try_into().unwrap()) as i64;
+            y1 = i16::from_le_bytes(hdr[2..4].try_into().unwrap()) as i64;
+            cwq = i32::from_le_bytes(hdr[4..8].try_into().unwrap()) as i64;
+            r2q = i32::from_le_bytes(hdr[8..12].try_into().unwrap()) as i64;
+            amp = 0;
+            rq = 0;
+            p = 0;
+            qf = 0;
+            phi0 = 0;
+            env_sel = 0;
+            stride_sel = 0;
+        }
+        1 => {
+            let hdr: [u8; 8] = payload
+                .get(*pos..*pos + 8)
+                .ok_or(ERR_TRUNCATED)?
+                .try_into()
+                .map_err(|_| ERR_TRUNCATED)?;
+            *pos += 8;
+            cwq = i32::from_le_bytes(hdr[0..4].try_into().unwrap()) as i64;
+            r2q = i32::from_le_bytes(hdr[4..8].try_into().unwrap()) as i64;
+            amp = 0;
+            rq = 0;
+            p = 0;
+            qf = 0;
+            phi0 = 0;
+            env_sel = 0;
+            stride_sel = 0;
+        }
+        _ => {
+            let f: [u8; 8] = payload
+                .get(*pos..*pos + 8)
+                .ok_or(ERR_TRUNCATED)?
+                .try_into()
+                .map_err(|_| ERR_TRUNCATED)?;
+            *pos += 8;
+            amp = i32::from_le_bytes(f[0..4].try_into().unwrap()) as i64;
+            rq = i32::from_le_bytes(f[4..8].try_into().unwrap()) as i64;
+            p = read_varint(payload, pos)?;
+            qf = read_varint(payload, pos)?;
+            phi0 = read_varint(payload, pos)?;
+            env_sel = read_varint(payload, pos)? as u32;
+            stride_sel = read_varint(payload, pos)? as u32;
+            cwq = 0;
+            r2q = 0;
+        }
+    }
+    // masks (f0 covers count-2 positions; f1/f2 cover count)
+    let mask_positions = if family == 0 { count - 2 } else { count };
+    let mask_bytes = mask_positions.div_ceil(32) * 4;
+    let mask_slice = payload.get(*pos..*pos + mask_bytes).ok_or(ERR_TRUNCATED)?;
+    let mut masks = Vec::with_capacity(mask_positions.div_ceil(32));
+    for c in mask_slice.chunks_exact(4) {
+        masks.push(u32::from_le_bytes(c.try_into().unwrap()));
+    }
+    *pos += mask_bytes;
+    // reconstruct
+    let rec: Vec<i64> = match family {
+        0 => {
+            let pred = osc0_generate(y0, y1, cwq, r2q, q, count)
+                .ok_or("OSC dynamics unstable or out of envelope")?;
+            let mut rec = pred.clone();
+            for (k, i) in (2..count).enumerate() {
+                if masks[k / 32] & (1 << (k % 32)) != 0 {
+                    rec[i] = pred[i] + zigzag_decode(read_varint(payload, pos)?);
+                }
+            }
+            rec
+        }
+        1 => {
+            let mut rec = Vec::with_capacity(count);
+            let (mut p1, mut p2) = (0i64, 0i64);
+            for i in 0..count {
+                let pred = if i < 2 {
+                    0
+                } else {
+                    let v = (p1 * cwq - p2 * r2q).div_euclid(q);
+                    if v.abs() > OSC_ENVELOPE_MAX {
+                        return Err("OSC dynamics out of envelope".into());
+                    }
+                    v
+                };
+                let coded = masks[i / 32] & (1 << (i % 32)) != 0;
+                let d = if coded {
+                    zigzag_decode(read_varint(payload, pos)?)
+                } else {
+                    0
+                };
+                let v = pred + d;
+                if v.abs() > OSC_ENVELOPE_MAX {
+                    return Err("OSC reconstruction out of envelope".into());
+                }
+                rec.push(v);
+                p2 = p1;
+                p1 = v;
+            }
+            rec
+        }
+        _ => {
+            if qf == 0 || qf > 4096 || 4096 % qf != 0 {
+                return Err("invalid OSC lattice size".into());
+            }
+            let shift = f2_stride_shift(stride_sel);
+            let pred = osc2_synth(amp, rq, p, qf, phi0, env_sel, shift, count);
+            let mut rec = Vec::with_capacity(count);
+            for (i, &pv) in pred.iter().enumerate() {
+                let coded = masks[i / 32] & (1 << (i % 32)) != 0;
+                let d = if coded {
+                    zigzag_decode(read_varint(payload, pos)?)
+                } else {
+                    0
+                };
+                let v = pv + d;
+                if v.abs() > OSC_ENVELOPE_MAX {
+                    return Err("OSC reconstruction out of envelope".into());
+                }
+                rec.push(v);
+            }
+            rec
+        }
+    };
+    let _ = (&mut y0, &mut y1);
+    for v in rec {
+        samples.push(i16_from_i64(v)?);
+    }
+    Ok(())
+}
+
 /// Encode: model selection + serialization. Public entry point.
 pub fn encode(sample_rate: u32, samples: &[i16]) -> Result<Vec<u8>, String> {
     if samples.is_empty() {
@@ -607,9 +1145,145 @@ pub fn decode_payload(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> 
     decode(payload)
 }
 
+/// Research API (v0.3 measurement tests): per-variant complete payload costs,
+/// the PERIOD control, the P3 anchor-stride curve, and the P4 LS-vs-DL pair.
+pub mod research {
+    use super::*;
+
+    /// Complete payload cost (bytes) for every OSC variant (None = N/A).
+    pub fn osc_variant_costs(samples: &[i16]) -> Vec<(usize, &'static str, Option<usize>)> {
+        (0..OSC_VARIANT_COUNT)
+            .map(|v| (v, osc_variant_name(v), osc_payload_len(samples, v)))
+            .collect()
+    }
+
+    /// Best PERIOD control cost (dense lag sweep 2..=96), if any.
+    pub fn period_control_cost(samples: &[i16]) -> Option<usize> {
+        (2..=96usize)
+            .filter_map(|lag| period_payload_len(samples, lag))
+            .min()
+    }
+
+    /// P3 curve: f2 cost at each forced anchor stride (stage-1 seed, stride
+    /// varied) for the given grid (false = coarse variant 4, true = refined 5).
+    pub fn f2_stride_curve(samples: &[i16], refined: bool) -> Vec<(u32, usize)> {
+        let n = samples.len();
+        let Some((c, _)) = osc_ls_fit(samples) else {
+            return Vec::new();
+        };
+        let _ = c;
+        let seeds = osc2_fit_candidates(samples, refined);
+        if seeds.is_empty() {
+            return Vec::new();
+        }
+        let x: Vec<i64> = samples.iter().map(|&s| s as i64).collect();
+        let variant = if refined { 5 } else { 4 };
+        let variant_varint = varint_len(variant as u64);
+        // pick stage-1 winner at no anchors (mirror osc_plan)
+        let env_sels: &[u32] = if refined { &F2_ENV_SELS } else { &[0, 9] };
+        let mut best1: Option<(F2Seed, u32, usize)> = None;
+        for cand in &seeds {
+            for &env_sel in env_sels {
+                let pred = osc2_synth(cand.amp, cand.rq, cand.p, cand.q, cand.phi0, env_sel, 0, n);
+                let (masks, deltas) = plan_corrections_masked(&x, &pred, 0);
+                let cost = header_len(n)
+                    + variant_varint
+                    + 8
+                    + varint_len(cand.p)
+                    + varint_len(cand.q)
+                    + varint_len(cand.phi0)
+                    + varint_len(env_sel as u64)
+                    + varint_len(0)
+                    + masks.len() * 4
+                    + deltas_bytes(&deltas);
+                if best1.as_ref().is_none_or(|(_, _, c)| cost < *c) {
+                    best1 = Some((*cand, env_sel, cost));
+                }
+            }
+        }
+        let Some((seed, env_sel, _)) = best1 else {
+            return Vec::new();
+        };
+        F2_STRIDE_SELS
+            .iter()
+            .map(|&sel| {
+                let shift = f2_stride_shift(sel);
+                let pred = osc2_synth(
+                    seed.amp, seed.rq, seed.p, seed.q, seed.phi0, env_sel, shift, n,
+                );
+                let (masks, deltas) = plan_corrections_masked(&x, &pred, 0);
+                let cost = header_len(n)
+                    + variant_varint
+                    + 8
+                    + varint_len(seed.p)
+                    + varint_len(seed.q)
+                    + varint_len(seed.phi0)
+                    + varint_len(env_sel as u64)
+                    + varint_len(sel as u64)
+                    + masks.len() * 4
+                    + deltas_bytes(&deltas);
+                (sel, cost)
+            })
+            .collect()
+    }
+
+    /// Public f2 synthesis for exact-fit fixtures (integer pipeline as shipped).
+    #[allow(clippy::too_many_arguments)]
+    pub fn synth_phase_lattice(
+        amp: i64,
+        rq: i64,
+        p: u64,
+        q: u64,
+        phi0: u64,
+        env_shift: u32,
+        stride_shift: u32,
+        n: usize,
+    ) -> Vec<i16> {
+        osc2_synth(amp, rq, p, q, phi0, env_shift, stride_shift, n)
+            .into_iter()
+            .map(|v| v.clamp(i16::MIN as i64, i16::MAX as i64) as i16)
+            .collect()
+    }
+
+    /// P4: (LS-selected cost, DL-selected cost) for an f0/f1 variant.
+    /// The MSE-rounding candidate is inside the sweep, so dl <= ls must hold.
+    pub fn p4_ls_vs_dl(samples: &[i16], variant: usize) -> Option<(usize, usize)> {
+        let family = osc_variant_family(variant);
+        if family > 1 {
+            return None;
+        }
+        let grid = osc_variant_grid(variant);
+        let q: i64 = if grid == 0 { OSC_Q15 } else { OSC_Q30 };
+        let n = samples.len();
+        let x: Vec<i64> = samples.iter().map(|&s| s as i64).collect();
+        let (c, rr) = osc_ls_fit(samples)?;
+        let variant_varint = varint_len(variant as u64);
+        let mut ls_cost: Option<usize> = None;
+        let mut dl_cost: Option<usize> = None;
+        for (cwq, r2q) in osc_coeff_candidates(c, rr, grid) {
+            let cost = if family == 0 {
+                let pred = osc0_generate(x[0], x[1], cwq, r2q, q, n)?;
+                let (masks, deltas) = plan_corrections_masked(&x, &pred, 2);
+                header_len(n) + variant_varint + 12 + masks.len() * 4 + deltas_bytes(&deltas)
+            } else {
+                let (masks, deltas) = osc1_plan(&x, cwq, r2q, q)?;
+                header_len(n) + variant_varint + 8 + masks.len() * 4 + deltas_bytes(&deltas)
+            };
+            dl_cost = Some(dl_cost.map_or(cost, |m| m.min(cost)));
+            let cw_mse = (c * q as f64).round() as i64;
+            let r2_mse = (rr.max(0.0) * q as f64).round() as i64;
+            if cwq == cw_mse.clamp(-(2 * q - 1), 2 * q - 1) && r2q == r2_mse.clamp(0, 2 * q - 1) {
+                ls_cost = Some(cost);
+            }
+        }
+        Some((ls_cost?, dl_cost?))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::research;
 
     fn roundtrip(rate: u32, samples: &[i16]) -> Model {
         let payload = encode(rate, samples).expect("encode");
@@ -619,11 +1293,34 @@ mod tests {
         m2
     }
 
+    /// Roundtrip a specific OSC variant (for per-variant acceptance checks).
+    fn osc_roundtrip(variant: usize, rate: u32, samples: &[i16]) -> usize {
+        let ser = serialize(
+            Model {
+                kind: MODEL_OSC,
+                param: variant,
+            },
+            rate,
+            samples,
+        )
+        .unwrap_or_else(|e| panic!("variant {variant} serialize: {e}"));
+        let n = payload_len(MODEL_OSC, variant, samples).expect("metric");
+        assert_eq!(
+            n,
+            ser.len(),
+            "variant {variant}: metric must equal serialize"
+        );
+        let (_, back, m) = decode_payload(&ser).expect("decode");
+        assert_eq!(m.kind, MODEL_OSC);
+        assert_eq!(m.param, variant);
+        assert_eq!(back, samples, "variant {variant}: exact reconstruction");
+        ser.len()
+    }
+
     #[test]
     fn silence_roundtrips_and_shrinks() {
         roundtrip(44100, &[0i16; 4096]);
         let payload = encode(44100, &[0i16; 4096]).expect("encode");
-        // PERIOD lag 2: mask words (128*4 B) dominate; well under 600 despite that
         assert!(
             payload.len() < 600,
             "silence should compress hard, got {} bytes",
@@ -637,7 +1334,6 @@ mod tests {
             .map(|i| (10000.0 * (2.0 * std::f64::consts::PI * i as f64 / 24.0).sin()) as i16)
             .collect();
         let model = roundtrip(44100, &samples);
-        // PERIOD or OSC both legitimately fit a pure sine — just not RAW.
         assert_ne!(
             model.kind, MODEL_RAW,
             "fixed-frequency sine must not fall back to RAW"
@@ -663,14 +1359,11 @@ mod tests {
     #[test]
     fn damped_oscillator_selects_osc_and_compresses() {
         // Fixture generated by the exact integer dynamics the model encodes:
-        // y[i] = (64210*y[i-1] - 32000*y[i-2]) / 2^15 — a damped sinusoid with
-        // r = sqrt(32000/32768) ≈ 0.988, ω ≈ 0.1307 rad/sample (~fs/48 period).
-        // The LS fit must recover the very coefficients that generated it, so
-        // corrections vanish and the payload is params + zero masks only.
+        // y[i] = (64210*y[i-1] - 32000*y[i-2]) / 2^15.
         let mut y = vec![8000i64, 6000i64];
         for i in 2..5000 {
             let (a, b) = (y[i - 1], y[i - 2]);
-            y.push((a * 64210 - b * 32000).div_euclid(OSC_Q));
+            y.push((a * 64210 - b * 32000).div_euclid(OSC_Q15));
         }
         let samples: Vec<i16> = y.iter().map(|&v| v as i16).collect();
         let model = roundtrip(44100, &samples);
@@ -701,7 +1394,7 @@ mod tests {
     fn malformed_payloads_rejected() {
         assert!(decode_payload(b"").is_err());
         assert!(decode_payload(b"RIFFxxxxWAVE").is_err());
-        assert!(decode_payload(b"ACUSTCS1\xff\x01\x00").is_err()); // short header
+        assert!(decode_payload(b"ACUSTCS1\xff\x01\x00").is_err());
         assert!(decode_payload(&[0u8; 15]).is_err());
         let p = encode(44100, &[1, 2, 3]).expect("encode");
         assert!(decode_payload(&p[..p.len() - 1]).is_err(), "truncation");
@@ -718,11 +1411,9 @@ mod tests {
         let mut badkind = p.clone();
         badkind[9] = 99;
         assert!(decode_payload(&badkind).is_err(), "bad kind");
-        // count varint claims more samples than the body carries
         let mut badcount = p.clone();
         badcount[14] |= 0x40;
         assert!(decode_payload(&badcount).is_err(), "inflated count");
-        // zero rate
         let mut badrate = encode(44100, &[0i16; 300]).expect("encode");
         badrate[10..14].copy_from_slice(&0u32.to_le_bytes());
         assert!(decode_payload(&badrate).is_err(), "zero rate");
@@ -730,26 +1421,46 @@ mod tests {
 
     #[test]
     fn osc_payloads_reject_bad_params() {
-        // hand-built OSC: variant, y0/y1 (i16) + r2q/cwq (i32), masks — unstable
+        // f0 (variant 0) with unstable dynamics: C=0, R=4Q15 escapes envelope
         let mut p = Vec::new();
         p.extend_from_slice(MAGIC);
         p.push(VERSION);
         p.push(MODEL_OSC);
         p.extend_from_slice(&44100u32.to_le_bytes());
-        p.push(100); // count
-        p.push(0); // variant 0
-                   // unstable dynamics: C=0, R=4 -> y alternates and blows the envelope
+        write_varint(&mut p, 100); // count
+        write_varint(&mut p, 0); // variant 0
         p.extend_from_slice(&100i16.to_le_bytes());
         p.extend_from_slice(&50i16.to_le_bytes());
-        p.extend_from_slice(&(4i32 * (OSC_Q as i32)).to_le_bytes());
         p.extend_from_slice(&0i32.to_le_bytes());
+        p.extend_from_slice(&(4i32 * OSC_Q15 as i32).to_le_bytes());
         p.extend_from_slice(&[0u8; 32]); // masks
         assert!(decode_payload(&p).is_err(), "unstable OSC params rejected");
 
         // variant out of range
         let mut p2 = p.clone();
-        p2[15] = 200; // variant >= OSC_VARIANT_COUNT
+        *p2.last_mut().unwrap() = 200;
+        // (variant byte sits right after count; rebuild deterministically)
+        let mut p2 = Vec::new();
+        p2.extend_from_slice(MAGIC);
+        p2.push(VERSION);
+        p2.push(MODEL_OSC);
+        p2.extend_from_slice(&44100u32.to_le_bytes());
+        write_varint(&mut p2, 100);
+        write_varint(&mut p2, 200); // >= OSC_VARIANT_COUNT
+        p2.extend_from_slice(&[0u8; 16]);
         assert!(decode_payload(&p2).is_err(), "bad OSC variant rejected");
+
+        // f2 (variant 4) truncated body: fields only, no varints/masks
+        let mut p3 = Vec::new();
+        p3.extend_from_slice(MAGIC);
+        p3.push(VERSION);
+        p3.push(MODEL_OSC);
+        p3.extend_from_slice(&44100u32.to_le_bytes());
+        write_varint(&mut p3, 100);
+        write_varint(&mut p3, 4);
+        p3.extend_from_slice(&100i32.to_le_bytes()); // amp
+        p3.extend_from_slice(&(OSC_Q15 as i32).to_le_bytes()); // rq
+        assert!(decode_payload(&p3).is_err(), "truncated f2 body rejected");
     }
 
     #[test]
@@ -768,7 +1479,6 @@ mod tests {
 
     #[test]
     fn wav_rejects_8bit_and_stereo() {
-        // 8-bit mono: fmt says bits=8
         let mut wav8 = Vec::new();
         wav8.extend_from_slice(b"RIFF");
         wav8.extend_from_slice(&36u32.to_le_bytes());
@@ -785,13 +1495,12 @@ mod tests {
         wav8.extend_from_slice(&[0u8, 255]);
         assert!(parse_wav(&wav8).is_err());
 
-        // stereo 16-bit: channels=2, but fmt size 16 keeps header aligned at 36
         let mut wav2 = Vec::new();
         wav2.extend_from_slice(b"RIFF");
         wav2.extend_from_slice(&36u32.to_le_bytes());
         wav2.extend_from_slice(b"WAVEfmt ");
         wav2.extend_from_slice(&16u32.to_le_bytes());
-        wav2.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        wav2.extend_from_slice(&1u16.to_le_bytes());
         wav2.extend_from_slice(&2u16.to_le_bytes()); // stereo
         wav2.extend_from_slice(&44100u32.to_le_bytes());
         wav2.extend_from_slice(&44100u32.to_le_bytes());
@@ -840,14 +1549,12 @@ mod tests {
 
     #[test]
     fn payload_len_matches_serialize_for_every_model() {
-        // selection metric must equal serialize's actual byte count for EVERY candidate
-        // (would have caught any header/body drift between the two implementations)
         let samples: Vec<i16> = (0..600i64)
             .map(|i| {
                 if i % 97 < 90 {
-                    (2000 * (i % 13)) as i16 // quasi-periodic run
+                    (2000 * (i % 13)) as i16
                 } else {
-                    let x = (i * 811) % 65536; // deterministic noise bursts
+                    let x = (i * 811) % 65536;
                     (x as i32 - 32768) as i16
                 }
             })
@@ -892,6 +1599,190 @@ mod tests {
                 let (_, back, _) = decode_payload(&ser).expect("dec");
                 assert_eq!(back, samples);
             }
+        }
+    }
+
+    // ---------- v0.3 research acceptance tests (P1-P4) ----------
+
+    /// P1: Q15 vs Q30 vs closed-loop on a float-generated damped sinusoid over
+    /// 44,100 samples. Claim under test: closed-loop (f1) does not exceed its
+    /// open-loop twin (f0) at the same grid; measurements printed for all
+    /// variants with PERIOD as control. Every variant must round-trip exactly.
+    #[test]
+    fn p1_phase_drift_comparison_over_44k_samples() {
+        let rate = 44100.0f64;
+        let n = 44100;
+        let samples: Vec<i16> = (0..n)
+            .map(|i| {
+                let t = i as f64 / rate;
+                let x = 12000.0
+                    * (-rate / 8000.0 * t).exp()
+                    * (2.0 * std::f64::consts::PI * (rate / 48.0) * t).cos();
+                x as i16
+            })
+            .collect();
+        let pcm = n * 2;
+        let period = research::period_control_cost(&samples).expect("period control");
+        eprintln!("P1 drift benchmark (float damped sinusoid, {n} samples):");
+        eprintln!(
+            "  PERIOD control : {period:>7} bytes ({:.1}% of PCM)",
+            period as f64 / pcm as f64 * 100.0
+        );
+        for v in [0usize, 1, 2, 3] {
+            let bytes = osc_roundtrip(v, 44100, &samples);
+            eprintln!(
+                "  OSC v{v} {:>40}: {bytes:>7} bytes ({:.1}% of PCM)",
+                osc_variant_name(v),
+                bytes as f64 / pcm as f64 * 100.0
+            );
+        }
+        let f0q15 = payload_len(MODEL_OSC, 0, &samples).expect("f0/Q15");
+        let f1q15 = payload_len(MODEL_OSC, 2, &samples).expect("f1/Q15");
+        assert!(
+            f1q15 <= f0q15,
+            "hypothesis under test FAILED: closed-loop f1 ({f1q15}) exceeded \
+             open-loop f0 ({f0q15}) — record and investigate"
+        );
+        eprintln!("  claim f1<=f0 (Q15): holds ({f1q15} <= {f0q15})");
+        // best OSC vs the PERIOD control - the v0.2 open question
+        let best_osc = (0..4)
+            .filter_map(|v| payload_len(MODEL_OSC, v, &samples))
+            .min()
+            .expect("osc costs");
+        eprintln!(
+            "  best OSC vs PERIOD: {best_osc} vs {period} ({})",
+            if best_osc < period {
+                "OSC WINS"
+            } else {
+                "PERIOD still wins"
+            }
+        );
+    }
+
+    /// P2: exact rational frequency. Fixture synthesized by the shipped f2
+    /// pipeline (p=1, q=512): the model can match its own output exactly, so
+    /// corrections must nearly vanish. Also round-trips a non-lattice-periodic
+    /// rational (p=7, q=512).
+    #[test]
+    fn p2_rational_frequency_exact_fit() {
+        let amp = 12000i64;
+        let n = 6000;
+        let exact = research::synth_phase_lattice(amp, OSC_Q15, 1, 512, 0, 0, 0, n);
+        for v in [4usize, 5] {
+            let bytes = osc_roundtrip(v, 44100, &exact);
+            eprintln!(
+                "P2 exact-fit (p=1/512): variant {v} ({}) = {bytes} bytes ({:.1}% of PCM)",
+                osc_variant_name(v),
+                bytes as f64 / (n as f64 * 2.0) * 100.0
+            );
+            assert!(
+                bytes < 900,
+                "exact-fit rational phase model should need almost no \
+                 corrections: {bytes} bytes for {n} samples"
+            );
+        }
+        let non = research::synth_phase_lattice(amp, OSC_Q15, 7, 512, 11, 0, 0, 4000);
+        let payload = encode(44100, &non).expect("encode");
+        let (_, back, m) = decode_payload(&payload).expect("decode");
+        assert_eq!(back, non, "non-lattice-simple rational must round-trip");
+        eprintln!(
+            "P2 nonperiodic (p=7/512): chose {} ({}) {} bytes",
+            if m.kind == MODEL_OSC { "OSC" } else { "other" },
+            osc_variant_name(m.param.min(OSC_VARIANT_COUNT - 1)),
+            payload.len()
+        );
+    }
+
+    /// P3: anchor stride vs correction cost. Hypothesis on the drifting float
+    /// fixture: SOME anchor stride beats no anchors (drift re-anchoring pays).
+    /// The full curve is printed; the selected plan's metric==serialize holds.
+    #[test]
+    fn p3_segment_size_tradeoff() {
+        let rate = 44100.0f64;
+        let n = 11025; // quarter second
+        let samples: Vec<i16> = (0..n)
+            .map(|i| {
+                let t = i as f64 / rate;
+                let x = 12000.0
+                    * (-rate / 8000.0 * t).exp()
+                    * (2.0 * std::f64::consts::PI * (rate / 48.0) * t).cos();
+                x as i16
+            })
+            .collect();
+        for refined in [false, true] {
+            let curve = research::f2_stride_curve(&samples, refined);
+            assert!(!curve.is_empty(), "f2 curve must exist for this fixture");
+            eprintln!(
+                "P3 anchor-stride curve ({}, n={n}):",
+                if refined { "refined" } else { "coarse" }
+            );
+            let mut cheapest = (0u32, usize::MAX);
+            for (sel, cost) in &curve {
+                let label = if *sel == 0 {
+                    "none".to_string()
+                } else {
+                    format!("{}", 1usize << f2_stride_shift(*sel))
+                };
+                eprintln!("  stride {label:>6}: {cost:>7} bytes");
+                if *cost < cheapest.1 {
+                    cheapest = (*sel, *cost);
+                }
+            }
+            let none_cost = curve[0].1;
+            eprintln!(
+                "  claim: some stride beats none ({})",
+                if cheapest.1 < none_cost {
+                    format!("holds: sel {} = {} < {none_cost}", cheapest.0, cheapest.1)
+                } else {
+                    format!("REVERSED: none ({none_cost}) already cheapest")
+                }
+            );
+            assert!(
+                cheapest.1 <= none_cost,
+                "P3 hypothesis failed: anchoring never helped (min {} > none {none_cost})",
+                cheapest.1
+            );
+        }
+        // selected-plan invariants
+        let bytes = osc_roundtrip(4, 44100, &samples);
+        let metric = payload_len(MODEL_OSC, 4, &samples).expect("f2 metric");
+        assert_eq!(bytes, metric);
+    }
+
+    /// P4: description-length fitting vs least-squares fitting. Structural
+    /// guarantee: the LS (MSE-rounding) candidate is inside the sweep set, so
+    /// DL cost <= LS cost for every f0/f1 variant. Gaps are the interesting
+    /// measurement — printed per variant.
+    #[test]
+    fn p4_dl_fitting_beats_or_ties_ls() {
+        let rate = 44100.0f64;
+        let n = 2000;
+        let samples: Vec<i16> = (0..n)
+            .map(|i| {
+                let t = i as f64 / rate;
+                let x = 9000.0
+                    * (-rate / 6000.0 * t).exp()
+                    * (2.0 * std::f64::consts::PI * (rate / 137.0) * t).cos();
+                x as i16
+            })
+            .collect();
+        for variant in [0usize, 1, 2, 3] {
+            let (ls, dl) = research::p4_ls_vs_dl(&samples, variant)
+                .unwrap_or_else(|| panic!("variant {variant} p4 costs"));
+            let note = if ls == dl {
+                "MSE point already optimal".to_string()
+            } else {
+                format!(
+                    "DL saves {} bytes ({:.1}%)",
+                    ls - dl,
+                    100.0 * (ls - dl) as f64 / ls as f64
+                )
+            };
+            eprintln!(
+                "P4 variant {variant} ({:>41}): LS {ls:>6} bytes, DL {dl:>6} bytes ({note})",
+                osc_variant_name(variant)
+            );
+            assert!(dl <= ls, "DL selection ({dl}) exceeded LS selection ({ls})");
         }
     }
 }
