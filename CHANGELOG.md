@@ -3,6 +3,50 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
+## [0.4.0] — 2026-10-27
+
+### Added
+
+- Exact discrete dynamics (P5, the v0.3 memo's second modeling family): grid 2 —
+  coefficient lattice q = 1, so the recurrence `y[i] = C*y[i-1] - R*y[i-2]` runs with
+  zero per-step truncation error. Stability analysis closes the space: R = r^2 must be
+  a non-negative integer with r <= 1 forces R = 1, and |C| <= 2r = 2 forces
+  C in {-1, 0, 1} — exactly three undamped integer oscillators, periods 3, 4, 6.
+  New variants 6 (f0 open-loop) and 7 (f1 closed-loop) sweep that space; coefficient
+  fields are zigzag varints ((1,1) costs 2 bytes vs the fixed 8-byte i32 pair).
+- Oscillator mixtures (P6/E1): variant family f3 (variants 8/9/10 = residual cascade
+  on Q15/Q30/integer grids). Stage s is closed-plan-fit on the residual seen so far
+  (greedy coefficient pick by residual energy, up to 3 stages); each stage's deltas
+  are coded; rec_s reconstructs level_s exactly, the level ladder is decoder-
+  computable, and the sum of the reconstructed streams is exactly x.
+- Tests P5 (integer exactness: periods 3/4/6 encode header+masks only, ~15x
+  compression), P6 (two-part mixture: every cascade variant exactly
+  round-trips; cascade >= single), P6b (stage-count cost assertion).
+  Suite: 19 tests.
+
+### Measured (research notes)
+
+- P5: exactly-integer undamped oscillators are provably limited to periods 3, 4, 6 —
+  damping on the integer lattice is structurally impossible (real roots cannot both
+  have modulus < 1 with R an integer >= 1). This is why the continuous family needs
+  fixed-point grids at all: the exact-discrete family and the approximated-continuous
+  family are complementary, not redundant. Exact-fit integer payloads are header +
+  mask-table only (~6.7% of PCM at n=3000); the mask table, not the delta stream, is
+  the structural floor.
+- P6 (honest negative): the greedy residual cascade TIES closed-loop-single on the
+  two-part fixture (4,512 B at k=1 vs 4,512 B single) rather than beating it. Decom-
+  position: (a) the first stage's greedy fit captures the whole signal's joint AR(2)
+  and leaves little for stage 2; (b) prediction-only intermediate stages — the design
+  that would avoid paying stage-level delta streams — compound drift like open-loop
+  f0. Named v0.5 requirement: jointly optimized or periodically re-anchored
+  intermediate stages (which connects directly to the per-segment re-fit target).
+
+### Deferred
+
+- Joint stage optimization / re-anchored cascade stages (v0.5).
+- Nonlinear dynamics; geometric state spaces.
+- Stereo/multi-channel and higher bit depths; PERIOD lags > 96.
+
 ## [0.3.0] — 2026-10-27
 
 ### Added
