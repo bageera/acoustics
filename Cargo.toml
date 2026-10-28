@@ -1,0 +1,9 @@
+[package]
+name = "acoustics"
+version = "0.1.0"
+edition = "2021"
+description = "ACOUSTICS - Mathematical & Physics-Informed Audio Research Engine (v0.1 baseline)"
+
+[[bin]]
+name = "acoustics"
+path = "src/main.rs"
