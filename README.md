@@ -1,10 +1,10 @@
 # ACOUSTICS
 
-**Mathematical & Physics-Informed Audio Research Engine** — v0.3
+**Mathematical & Physics-Informed Audio Research Engine** — v0.5
 
 A reversible audio-model codec research engine. Every payload decodes to the exact original samples; every experiment pays a measured, explicit information cost.
 
-## Status: v0.3 — phase-coherent dynamics (P1–P4 investigations)
+## Status: v0.5 — feasibility geometry + description-length ranking (F1–F3)
 
 Implemented in Rust with **no external crate dependencies**.
 
@@ -47,6 +47,9 @@ Variant id = `family*2 + grid` (grid bit: 0 = Q15, 1 = Q30 — the P1 experiment
 | 3 | f1 | closed-loop recurrence, Q30 (P1) |
 | 4 | f2 | phase-lattice synthesis, coarse sweep (P2/P3) |
 | 5 | f2 | phase-lattice synthesis, refined sweep (P2/P3) |
+| 6 | f0 | **exact discrete dynamics** — integer coefficient lattice q=1, zero per-step truncation (v0.4 P5) |
+| 7 | f1 | exact discrete dynamics, closed loop (v0.4 P5) |
+| 8–10 | f3 | residual cascade ×K stages (v0.4 mixtures): stage s closed-plan-fit on the residual seen so far, deltas coded, Σ rec_s == x exactly |
 
 **f2 (P2 rational frequency + P3 re-anchoring):** exact rational frequency `p/q` on an
 integer phase lattice with `q in {512, 1024, 2048, 4096}` — the LUT angle
@@ -54,6 +57,24 @@ integer phase lattice with `q in {512, 1024, 2048, 4096}` — the LUT angle
 frequency-representation error. Quarter-wave cosine LUT (Q15, baked constants); Q15
 envelope pow with per-segment reset **anchors** every `2^(stride_sel+5)` samples
 (P3's segment-vs-correction tradeoff); anchor positions are always coded.
+
+**Exact discrete dynamics (v0.4 P5, the memo's second modeling family):** grid 2 sets
+the coefficient lattice q = 1 — the recurrence runs with *zero* per-step truncation.
+Stability closes the space exactly: R = r² must be a non-negative integer with r ≤ 1
+forces R = 1, and |C| ≤ 2r forces C ∈ {−1, 0, 1} — precisely three undamped integer
+oscillators, periods 3, 4, and 6. Damping on the integer lattice is structurally
+impossible, which is *why* the continuous family needs fixed-point grids at all: the
+two families are complementary, not redundant. Coefficient fields are zigzag varints
+((1,1) costs 2 bytes vs the fixed 8-byte i32 pair).
+
+**Residual cascade (v0.4 E1/P6, variants 8–10):** stage s runs a closed-loop plan on
+the residual seen so far (greedy coefficient pick by residual energy, ≤3 stages),
+codes its own deltas; rec_s reconstructs level_s exactly, the level ladder is
+decoder-computable, and the sum of the reconstructed streams equals x exactly.
+Measured honest negative: the greedy cascade *ties* closed-loop-single on the
+two-part fixture (4,512 B both) — greedy stage fits leave little for later stages,
+and prediction-only (uncoded) intermediate stages compound drift like open-loop f0.
+Joint or re-anchored stage optimization is the named follow-up.
 
 **P4 (description-length fitting) is the plan search itself:** least squares seeds a
 coefficient neighborhood (±2 lattice steps around the MSE-rounding point); the encoder
@@ -98,6 +119,27 @@ construction; where it pays is signal-dependent — exactly why it is measured, 
 Three criteria stay separate throughout (physical/numerical fidelity vs information
 efficiency); no single score is computed anywhere.
 
+### Measured v0.4–v0.5 results
+
+- **Exact discrete dynamics (P5)**: the three stable integer oscillators
+  (periods 3/4/6) encode as header + mask table only — deltas vanish entirely;
+  ~6.7% of PCM at n=3000 (~15×), with the mask table (4 B per 32 samples) as the
+  structural floor. Exactness is proven, not fitted: coefficient lattice q = 1 has
+  no truncation to drift.
+- **Mixtures (P6, honest negative)**: the greedy residual cascade ties
+  closed-loop-single on the two-part fixture (4,512 B both) — measured, recorded,
+  and named as the v0.5+ target (joint/re-anchored stage optimization).
+- **Feasibility tier separation (F1)**: on truncated dynamics the ideal-real-valued
+  strip region is empty by n≈10 while the decoder-defined closed loop stays exact;
+  on exact-evolving dynamics the polygon is nonempty at n=600 with the centroid at
+  the true seed, and the tier-2 search recovers the generator bit-exactly.
+- **Entropy instruments (F2)**: H0 ≥ conditional entropy holds on every fixture;
+  shuffling leaves H0 invariant while cond₁ rises 2.22 → 3.39 bits — the two
+  measurements are separate instruments, per the work order.
+- **Latent vs closed loop (F3)**: latent-state wins anchor-free on exactly-
+  representable dynamics (0 vs 2 coded samples); closed loop wins decisively on
+  truncating dynamics (J 28 vs 1,706 bits). Neither direction is universal.
+
 ### Guarantees
 
 - **Exact reversibility** — decode reconstructs the original samples bit-for-bit (not
@@ -120,7 +162,7 @@ cargo run --release -- benchmark input.wav output.acoust   # encode + print mode
 cargo run --release -- decode output.acoust restored.wav   # exact decode to 16-bit WAV
 cargo run --release -- info output.acoust                  # describe a payload
 
-cargo test                                                  # 16-test suite
+cargo test                                                  # 25-test suite
 cargo test -- --nocapture p1_phase                          # print research measurements
 ```
 
@@ -134,11 +176,13 @@ let (rate, samples, model) = acoustics::decode_payload(&payload)?; // exact + mo
 ```
 
 `Model` is `{ kind: u8, param: usize }` — one of `MODEL_RAW`, `MODEL_D1`, `MODEL_D2`,
-`MODEL_PERIOD` (`param` = lag in 2..=96), `MODEL_OSC` (`param` = variant id 0..6).
+`MODEL_PERIOD` (`param` = lag in 2..=96), `MODEL_OSC` (`param` = variant id 0..11,
+see the variant table above).
 
 The `acoustics::research` module exposes the measurement surface:
 `osc_variant_costs`, `period_control_cost`, `f2_stride_curve`, `p4_ls_vs_dl`,
-`synth_phase_lattice` (exact integer f2 pipeline for fixtures).
+`synth_phase_lattice` (exact integer f2 pipeline for fixtures); `acoustics::feas`
+adds the v0.5 feasibility/entropy instruments (see its section below).
 
 ## Automated tests
 
@@ -146,23 +190,40 @@ The `acoustics::research` module exposes the measurement surface:
 an integer-dynamics damped sinusoid (OSC selection + >8x compression), 1–2 sample inputs,
 malformed-payload and bad-OSC-parameter rejections, WAV parse/write roundtrip,
 stereo/8-bit rejection, zigzag+varint boundary values, metric==serialize for every
-candidate — plus the four research acceptance tests P1–P4 (drift comparison over 44k
-samples, rational exact fit, anchor-stride tradeoff curve, LS-vs-DL fitting).
+candidate — the four v0.3 acceptance tests P1–P4 (drift over 44k samples, rational
+exact fit, anchor-stride tradeoff, LS-vs-DL fitting), the three v0.4 tests P5/P6/P6b
+(exact integer dynamics, mixtures, stage-count cost), and the six v0.5 feasibility
+tests F1a–F3 (strip geometry, decoder-representable search, entropy instruments,
+shuffle probe, latent-vs-closed-loop). Suite: 25 tests.
 
-## Honest limitations (v0.3)
+The `feas` research module (`acoustics::feas`, v0.5; wire format untouched) implements
+the description-length formulation as measurement machinery — strip-constraint
+feasibility tiers, the H0/cond₁/binned-cross-entropy instruments, J(θ) ranking, and
+the latent-vs-closed-loop runner. Its API surface: `fundamental_solutions`,
+`real_feasible_region`, `decoder_feasible_search`, `residual_stats`, `j_cost`,
+`latent_state_run`, `closed_loop_residual`. Findings summarized under "Measured
+v0.4–v0.5 results" above.
 
-- One oscillator per payload: no mixtures/superpositions (coupled oscillators are v0.4).
+## Honest limitations (v0.5)
+
+- One oscillator family per payload stage; f3 cascade capped at 3 stages (greedy
+  per-stage coefficient pick — joint stage optimization not yet implemented, and
+  the greedy cascade measured TIES on the two-part fixture).
 - f0/f1 fit one (R, C) pair for the whole run; f2 anchors amplitude but phase restarts
-  from fitted `phi0` per segment rather than re-fitting locally.
-- PERIOD lag capped at 96 samples; f2 lattices have `q | 4096` (period ≥ 1 sample
-  resolution is coarse at high q); envelope is Q15 pow evaluated per segment only.
-- Mono 16-bit only. Encode is a 6-variant × 25-candidate sweep: cost, not speed, is the
-  current objective.
+  per segment rather than re-fitting locally.
+- PERIOD lag capped at 96 samples; f2 lattices have `q | 4096`; envelope is Q15 pow
+  evaluated per segment only.
+- Mono 16-bit only. Encode sweeps 11 variants × candidate grids: description length,
+  not encode speed, is the objective.
+- The feasibility tier applies the strip geometry to exactly-evolving systems;
+  feasibility polygons for truncated dynamics are decoder-defined, not half-plane-
+  intersected (the measured distinction above).
 
 ## Where the research goes next
 
-v0.4 targets: **coupled oscillators** (superpositions and modal mixtures), per-segment
-local re-fits, nonlinear dynamics, geometric state-space representations, and — per the
-v0.3 memo — a second modeling family of **exact discrete dynamical systems** (reversible
-integer lattice transformations) to stand beside the continuous-dynamics family.
-Reversibility and measured cost stay nonnegotiable.
+The v0.5 work order's sequence continues: real-audio corpora (speech, instruments,
+room responses — where the irreducible quantity is the CONDITIONAL entropy of the
+digitized signal given the model, not the marginal entropy of physical noise),
+multi-stage feasibility over re-anchored cascade segments, nonlinear dynamics, and
+the spatial acoustic-field models the project's name promises. Reversibility and
+measured description length stay nonnegotiable.
