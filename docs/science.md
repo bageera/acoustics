@@ -274,6 +274,61 @@ Nesting (x = E_θ(F_φ(z)+q)+r) is the named G2 boundary: a controlled
 two-stage experiment (echo, then one model for y) before any general
 composition.
 
+### 8.2 G2 — compositional echo, first experiment (v0.8-dev)
+
+The v0.7 boundary question — does a compact sequence of compatible
+transformations beat one flat model? — got its first controlled test
+(`src/nested.rs`, research-only container; no released wire format; nothing in
+`encode()`/the v0.7 wire changed). Nesting restricted to ONE inner model from
+the standing portfolio; the published intermediate is the same i16-clamped
+stream the flat echo arm publishes (no silent widening). The review's inner
+corrections `q` are structurally zero: the portfolio's inner models are
+lossless by their own invariant, so the container carries only echo-forward
+corrections on `x` — which makes G2 exactly measure "does the portfolio
+describe y more cheaply than flat echo's RAW billing".
+
+Complete three-candidate results (flat ECHO = best arm 10..13; portfolio =
+encode()'s measured-smallest; nested = the container):
+
+| Test | Base (generated independently of the container) | flat ECHO | nested | portfolio | inner winner |
+| ---- | ------------------------------------------------ | --------- | ------ | --------- | ------------ |
+| G2-A | integer recurrence echo (gain Q15/2, D=16)       | 1,290     | 188    | 297       | OSC f3 Q15   |
+| G2-B | square-lattice echo (gain 3·Q15/4, D=24)         | 2,422     | 294    | 401       | PERIOD lag 2 |
+| G2-C | float-damped-tone echo (gain Q15/2, D=32)        | 4,129     | 195    | 580       | OSC f3 Q30   |
+| G2-D | speech-like echo (gain Q15/2, D=40)              | 5,581     | 3,024  | 3,016     | OSC f1 Q15   |
+| G2-E | white noise                                      | 12,572    | 9,573  | 8,209     | (rejected)   |
+| G2-F | saturated wide intermediate (gain Q15, D=8)      | 1,226     | 47     | 50        | RAW varint   |
+
+Acceptance gate results:
+
+1. Exact PCM reconstruction for every nested candidate — **pass** (per-test
+   roundtrip assertions plus a per-variant sweep over ALL 4 gains × 63 delays
+   with a fixed inner on a mixed fixture).
+2. Billed size == emitted size — **pass** (caught during development: the
+   container initially billed a 14-byte header it does not write — headerless
+   frame; the invariant test now enforces the headerless accounting).
+3. Savings over BOTH controls on at least one independent fixture — **pass**
+   (G2-C: float-generated base, 195 B vs 4,129 flat and 580 portfolio).
+4. Rejection of unhelpful nesting — **pass**: on white noise the nested
+   container (9,573 B) loses to the plain portfolio (8,209 B, RAW literal) —
+   MDL keeps the flat winner; nesting buys nothing there.
+5. No underflow/overflow/saturation mismatch — **pass**: G2-F drives the
+   inverse recursion past ±32767 mid-stream (unsaturated intermediate
+   published i16-clamped, exactly as the flat arm publishes) and still
+   reconstructs exactly at 47 B vs 1,226 flat.
+6. Reproducible per-arm results recorded — **this section**; the tests print
+   all three candidates per fixture (`--nocapture`).
+
+Honest reading. The nested intermediate was described by PORTFOLIO models
+(OSC f3 cascade, PERIOD lag-2, f1 closed-loop) — meaning the composition's
+value came from applying an existing exact model to the transform's inverse,
+not from new math. G2-D (speech-like) shows composition near-parity: nested
+3,024 vs portfolio 3,016 — the 8-byte edge goes to the flat portfolio, and
+the record keeps that loss beside the wins. Noise rejects nesting. The
+hypothesis survives its first experiment: composition shortened the complete
+description on every structured fixture, largest exactly where the inner y
+obeys a rule the flat arm cannot see.
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

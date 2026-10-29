@@ -3,6 +3,27 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
+## [Unreleased]
+
+### Added
+
+- **G2 — compositional echo**, the review's controlled single-inner-model
+  experiment (`src/nested.rs`; research-only container, no wire-format
+  exposure, v0.7 behavior unchanged):
+  `count, gain, delay, inner(y), corrections` where `inner` is selected by
+  the standing portfolio (RAW/D1/D2/PERIOD/LOOP/OSC) over the published
+  i16-clamped intermediate.
+  - G2 acceptance tests A–F: exact reconstruction everywhere; billed ==
+    emitted size (all-gains × all-delays sweep with a fixed inner); savings
+    over BOTH controls on the float-generated fixture (G2-C: 195 B vs 4,129
+    flat / 580 portfolio); nesting rejected on white noise (9,573 vs
+    portfolio 8,209); saturated wide-intermediate exact at 47 B (G2-F).
+  - Findings + the honest G2-D near-parity loss recorded in
+    docs/science.md §8.2.
+  - One accounting bug found en route: the container initially billed a
+    14-byte header it does not write (headerless frame); fixed and pinned by
+    the invariant test.
+
 ## [0.7.0] — 2026-10-28
 
 ### Added

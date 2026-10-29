@@ -13,6 +13,8 @@ use cos_q13::COSQ13;
 mod masks_rle;
 use masks_rle::{mask_rle_wire_len, read_mask_rle, write_mask_rle};
 
+pub mod nested;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;
@@ -32,7 +34,7 @@ const VARINT_MAX_BYTES: usize = 10;
 
 const ERR_BAD_MAGIC: &str = "bad magic (not an ACOUSTICS payload)";
 const ERR_TRUNCATED: &str = "truncated payload";
-const ERR_EMPTY: &str = "no samples";
+pub(crate) const ERR_EMPTY: &str = "no samples";
 const ERR_RANGE: &str = "decoded sample out of i16 range";
 
 // ---------- integer coding ----------
@@ -87,7 +89,7 @@ pub(crate) fn varint_len(v: u64) -> usize {
 }
 
 /// Fixed header: magic(8) + version(1) + kind(1) + rate(4) + count varint.
-fn header_len(count: usize) -> usize {
+pub(crate) fn header_len(count: usize) -> usize {
     14 + varint_len(count as u64)
 }
 
@@ -252,7 +254,7 @@ fn period_payload_len(samples: &[i16], lag: usize) -> Option<usize> {
 }
 
 /// Exact serialized size of a complete payload for `kind` (selection metric).
-fn payload_len(kind: u8, param: usize, samples: &[i16]) -> Option<usize> {
+pub(crate) fn payload_len(kind: u8, param: usize, samples: &[i16]) -> Option<usize> {
     if samples.is_empty() {
         return None;
     }
@@ -1123,7 +1125,11 @@ fn choose_model(samples: &[i16]) -> Model {
     best
 }
 
-fn serialize(model: Model, sample_rate: u32, samples: &[i16]) -> Result<Vec<u8>, String> {
+pub(crate) fn serialize(
+    model: Model,
+    sample_rate: u32,
+    samples: &[i16],
+) -> Result<Vec<u8>, String> {
     let mut out = Vec::with_capacity(samples.len() * 2 + 64);
     out.extend_from_slice(MAGIC);
     out.push(VERSION);
@@ -1173,7 +1179,7 @@ fn serialize(model: Model, sample_rate: u32, samples: &[i16]) -> Result<Vec<u8>,
     Ok(out)
 }
 
-fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
+pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
     if payload.len() < 14 || payload[..8] != *MAGIC {
         return Err(ERR_BAD_MAGIC.into());
     }
@@ -1592,7 +1598,7 @@ fn loop_plan(samples: &[i16], period_len: usize) -> Option<OpPlan> {
     })
 }
 
-fn plan_corrections_masked_op(r: &[i64]) -> (Vec<u32>, Vec<i64>) {
+pub(crate) fn plan_corrections_masked_op(r: &[i64]) -> (Vec<u32>, Vec<i64>) {
     let mut masks = vec![0u32; r.len().div_ceil(32)];
     let mut deltas = Vec::new();
     for (i, &d) in r.iter().enumerate() {
