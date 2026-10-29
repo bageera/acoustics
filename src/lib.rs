@@ -34,6 +34,9 @@ pub mod g6;
 /// G7 research (acoustic structure attribution) — never on the v4 wire.
 pub mod g7;
 
+/// G8 research (coefficient dynamics) — never on the v4 wire.
+pub mod g8;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;

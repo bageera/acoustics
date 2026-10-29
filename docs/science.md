@@ -710,6 +710,39 @@ A transfer/physics claim (G7-B's ambition) needs parameters valid across
 events; measured here, they are not. Honest next ground per the original
 review: a broader recording corpus (music/environmental) IF any transfer
 hypothesis is revisited — with these floors as the starting baselines.
+### 8.13 G8 — coefficient dynamics (CLOSED at G8-A/B; the budget is 0.1%)
+
+The G7 review's next hypothesis (`src/g8.rs`, research-only): the cascade's
+locally fitted coefficients may carry their own compact dynamics. The review's
+G8-A gate — measure the coefficient budget BEFORE any adaptive machinery —
+fires the early-closure clause verbatim.
+
+**G8-A — the coefficient budget (the entire G8 upside)**: the shipped
+family-3 cascade carries each stage's (c, r) as two zigzag varints:
+
+| Stream | windows | payload bytes | coefficient bytes | share |
+| ------ | ------- | ------------- | ----------------- | ----- |
+| example_word ch0/ch1 | 9 | 53,182/53,230 B | 54 B | **0.10%** |
+| can_you_stop ch0 | 20 | 95,573 B | 83 B | **0.09%** |
+| sample2 ch0/ch1 | 100 | 430,712/440,541 B | 404/402 B | **0.09%** |
+
+Even PERFECT elimination of coefficient transport (impossible — the decoder
+needs the values) buys under 0.1% on every stream.
+
+**G8-B — delta trajectories** (are the CHANGES predictable?): H(delta-pairs)
+= 6.63 vs H(c,r-absolute) 6.62 on sample2 — the deltas carry NO additional
+structure; 3.00 vs 3.17 / 3.91 vs 4.00 likewise within noise. And 0 of 125
+stage r2 values sit within 64 Q15 units of Q15: every cascade stage is a
+DAMPED pole — the coefficients genuinely roam (consistent with G7-D's
+distinct-pairs finding) rather than tracing a recurrence near pure
+oscillation.
+
+**Verdict**: G8 CLOSED. The hierarchical hypothesis — an equation governing
+which equations describe successive regions — is priced at under 0.1% of the
+description on the locked corpus: there is nothing meaningful for coefficient
+dynamics to save. This is the cleanest possible honest negative: the budget
+ceiling was measured first, and it is two orders below the smallest gains the
+ledger records anywhere.
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

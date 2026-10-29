@@ -116,6 +116,16 @@ Format based on Keep a Changelog; versioning is SemVer.
   cascade machinery (many short-lived local stages), not a persistent physical
   law. science.md 8.12.
 
+### Measured (research only)
+
+- **G8 coefficient dynamics CLOSED at G8-A/B** (`src/g8.rs`): the cascade's
+  stage-coefficient budget measured at 0.09-0.10% of the payload on every locked
+  real stream (54-404 B) — even perfect coefficient prediction cannot matter.
+  Delta trajectories carry no additional structure (H(delta) = H(abs) within
+  noise); all 125 measured stages are damped poles (r2 < Q15 by >64 units).
+  The dynamics-of-equations hypothesis is priced below every gain in the
+  ledger. science.md 8.13.
+
 ## [Unreleased]
 
 ### Measured (research only)
