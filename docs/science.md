@@ -867,6 +867,53 @@ substantial recoverable savings beyond the (closed-by-evidence) floor; per
 the review's own rule, the corpus expansion to instruments/environmental
 recordings is the priority. Measurement-only retained; no predictor,
 transform, or entropy coder introduced.
+### 8.17 G12 — acoustic diversity corpus (music + environmental; a genuine opportunity signal)
+
+Corpus acquired and hash-locked (`scripts/g12_fetch.sh`; `testdata/g12/`
+gitignored — 239 MB of CC0 binaries; the script + recorded sha-256 hashes are
+the reproducible recipe; the review's preservation rule honored: park_wind.wav
+acquired in ORIGINAL 24-bit form and NOT measured — the engine is i16-only,
+deferred until true 24-bit support; the freesound piano note BLOCKED on the
+API token, recorded, not faked).
+
+**Q1 — which model wins per class** (fixed 4,096 windows, per channel; whole-
+file where it fits):
+
+| Class | windows | portfolio (% of PCM) | model mix (per window) |
+| --- | --- | --- | --- |
+| piano/music | 172/ch | **62.4-64.9%** (whole-file 62.2-64.7%) | D2 170/172; cascade 2 |
+| park_birds | 200/ch | 51.1-51.7% | D2 ~150, D1 ~52, cascade 4 |
+| park_river ch0/ch1 | 200/ch | 69.6% / 72.2% | D2 200/200; D1 200/200 |
+| speech controls | 20/ch | 49.3-58.3% | MIXED: D2 10, D1 20, OP 5, OSC 5 |
+
+D2 is the sweeping winner on MUSIC (170/172 windows) and the environment
+(birds 75%, river 100% ch0) — sustained tones and broadband noise are
+smooth second-derivative streams; speech was the only class needing the
+MIXED portfolio (transients + OP's periodicity + cascade).
+
+**Q2 — the residual-information distribution DOES change by class** (H0/
+Hcond/actual on the winning streams, n ≥ 700k symbols — beyond the
+small-n bias):
+
+| Class | actual | H0-coded | Hcond-coded | Hcond gap vs actual |
+| --- | --- | --- | --- | --- |
+| piano (D2 stream) | ~900 kB | 688 kB | **331-343 kB** | **−52..−63%** |
+| birds (D1/D2) | ~824-834 kB | 636 kB | 476-489 kB | −42% |
+| river (D1/D2) | ~1.14-1.18 MB | 837-853 kB | **370-385 kB** | **−66..−67%** |
+| speech (control) | (G11-A rows) | | | collapsed under coder evidence |
+
+**Q3 — a genuine opportunity emerges**: the music/environment classes show
+lag-1 conditional structure 42-67% below the actual cost at LARGE n — the
+same measurement that collapsed on speech (G5-F coder-lost, small-n bias).
+The difference is structural: speech corrections are sparse/TRANSIENT
+(differencing spreads bursts), while music/field recordings are DENSE and
+SMOOTH (adjacent deltas nearly equal; no bursts to spread). This is a NEW
+hypothesis the speech experiments never priced: class-conditional D1-residual
+coding with big-n statistics, subject to the standard gates
+(ΔL_complete vs the shipped coder, held-out, negative control, exact
+reconstruction). Recorded as the G12-derived candidate — NOT built yet.
+
+No model promotion occurred (the review's rule); the wire is untouched.
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

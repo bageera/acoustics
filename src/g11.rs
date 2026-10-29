@@ -24,8 +24,7 @@
 use crate::{predictor_residuals, MODEL_D1, MODEL_OSC, MODEL_PERIOD};
 
 /// Shannon H0 of a symbol slice (exact empirical distribution).
-#[cfg(test)]
-fn h0(symbols: &[u64]) -> f64 {
+pub(crate) fn h0(symbols: &[u64]) -> f64 {
     let mut hist = std::collections::HashMap::new();
     for &s in symbols {
         *hist.entry(s).or_insert(0u32) += 1;
@@ -40,8 +39,7 @@ fn h0(symbols: &[u64]) -> f64 {
 }
 
 /// Lag-1 conditional entropy via joint counting of (R_{n-1}, R_n).
-#[cfg(test)]
-fn hcond1(symbols: &[u64]) -> f64 {
+pub(crate) fn hcond1(symbols: &[u64]) -> f64 {
     if symbols.len() < 2 {
         return 0.0;
     }

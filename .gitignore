@@ -1,2 +1,5 @@
 # Cargo
 /target/
+
+# G12 acoustic-diversity corpus: large CC0 files, hash-locked acquisition via scripts/g12_fetch.sh
+testdata/g12/

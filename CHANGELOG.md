@@ -161,6 +161,19 @@ Format based on Keep a Changelog; versioning is SemVer.
   measured). No substantial recoverable headroom on tested speech; corpus
   expansion = the recommended next ground. science.md 8.16.
 
+### Measured (research only)
+
+- **G12 acoustic-diversity corpus** (`src/g12.rs` + `scripts/g12_fetch.sh`;
+  `testdata/g12/` gitignored with hash-locked acquisition): piano/music = D2
+  (170/172 windows, 62-65% of PCM, exact whole-file reconstruction), field
+  recordings = D2/D1 sweeps (51-73% of PCM), speech = the only class needing
+  the mixed portfolio. Residual diagnostics at n >= 700k symbols: music/env
+  classes show lag-1 conditional structure 42-67% below actual cost (the
+  measurement that collapsed on speech at small n) — recorded as the G12-
+  derived candidate (class-conditional D1 coding), gated, NOT built.
+  park_wind.wav = 24-bit, preserved unmeasured (engine is i16-only); freesound
+  piano note blocked on API token (recorded, not faked). science.md 8.17.
+
 ## [Unreleased]
 
 ### Measured (research only)

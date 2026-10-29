@@ -49,6 +49,10 @@ pub(crate) mod g10;
 #[cfg(test)]
 pub(crate) mod g11;
 
+/// G12 research (acoustic-diversity corpus benchmark) — research-only.
+#[cfg(test)]
+pub(crate) mod g12;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;
