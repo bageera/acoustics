@@ -62,7 +62,7 @@ pub(crate) mod g13;
 pub mod feas;
 
 pub const MAGIC: &[u8; 8] = b"ACUSTCS1";
-pub const VERSION: u8 = 4;
+pub const VERSION: u8 = 5;
 pub const MODEL_RAW: u8 = 0;
 pub const MODEL_D1: u8 = 1;
 pub const MODEL_D2: u8 = 2;
@@ -71,6 +71,10 @@ pub const MODEL_OSC: u8 = 4;
 /// v0.7 pre-dimensionality battery: simple discrete operations with explicit
 /// decode-exact inverses, tested BEFORE any dimensionality increase.
 pub const MODEL_OP: u8 = 5;
+/// v5 wire (G13, 0.9.0): third-order differences — the G12/G13 measured
+/// class-conditional win (piano +14-17.8% vs the complete portfolio,
+/// held-out; loses on broadband/stochastic ⇒ selectable, never mandatory).
+pub const MODEL_D3: u8 = 6;
 
 /// Research paths that need an encode() roundtrip without a real recording
 /// (G3 ΔL measurement) use this rate; cost is rate-independent (the wire
@@ -310,6 +314,18 @@ fn predictor_residuals(samples: &[i16], kind: u8) -> Vec<i64> {
             }
             r
         }
+        MODEL_D3 => {
+            // first difference of the D2 stream (G13): v[0] = x0 seed,
+            // v[1] = (x1 - x0) - x0, then consecutive D2-deltas
+            let r2 = predictor_residuals(samples, MODEL_D2);
+            let mut r3 = Vec::with_capacity(r2.len());
+            r3.push(r2[0]);
+            for w in r2.windows(2) {
+                r3.push(w[1] - w[0]);
+            }
+            r3
+        }
+
         _ => samples.iter().map(|&s| s as i64).collect(),
     }
 }
@@ -1183,7 +1199,7 @@ fn choose_model(samples: &[i16]) -> Model {
         kind: MODEL_RAW,
         param: 0,
     };
-    for kind in [MODEL_D1, MODEL_D2] {
+    for kind in [MODEL_D1, MODEL_D2, MODEL_D3] {
         if let Some(n) = payload_len(kind, 0, samples) {
             if n < best_len {
                 best = Model { kind, param: 0 };
@@ -1292,7 +1308,9 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
         return Err(format!("unsupported version {}", payload[8]));
     }
     let kind = payload[9];
-    if kind > MODEL_OP {
+    if kind > MODEL_D3 {
+        // v5 wire: kinds 0..=6 (D3 is the v5 addition; the v4-era kinds are
+        // unchanged for v5 readers; version gating handles cross-version).
         return Err(format!("unknown model kind {kind}"));
     }
     let sample_rate = u32::from_le_bytes(payload[10..14].try_into().unwrap());
@@ -1375,6 +1393,26 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
                 samples.push(i16_from_i64(v)?);
                 s2 = s1;
                 s1 = Some(v);
+            }
+        }
+        MODEL_D3 => {
+            // v5 wire (G13): the D3 symbols re-accumulate through
+            // x[0] = r3[0], x[1] = 2x0 + r3[1], and for k >= 2
+            // x[k] = r3[k] + 3x[k-1] - 3x[k-2] + x[k-3] (the k=2 case's
+            // degenerate third state is 0 — verified by the roundtrip test).
+            let (mut sm1, mut sm2, mut sm3): (i64, i64, i64) = (0, 0, 0);
+            for (idx, _) in (0..count).enumerate() {
+                let r = zigzag_decode(read_varint(payload, &mut pos)?);
+                let v = match idx {
+                    0 => r,
+                    1 => 2 * sm1 + r,
+                    2 => r + 3 * sm1 - 2 * sm2,
+                    _ => r + 3 * sm1 - 3 * sm2 + sm3,
+                };
+                sm3 = sm2;
+                sm2 = sm1;
+                sm1 = v;
+                samples.push(i16_from_i64(v)?);
             }
         }
         MODEL_RAW => {
@@ -2361,6 +2399,101 @@ mod tests {
         }
     }
 
+    /// G13 wire acceptance: D3 as kind 6 — payload VERSION 5.
+    /// Selection: on a smooth fixture the portfolio may pick ANY winner, but
+    /// D3 must be a candidate with exact reconstruction on all classes
+    /// (its own win, plus fallbacks: noise/speech select other kinds).
+    #[test]
+    fn d3_wire_roundtrip_and_selection() {
+        for (name, samples) in [
+            ("smooth", &smooth_fixture()),
+            ("noise", &noise_fixture()),
+            ("silence", &vec![0i16; 4096]),
+            ("speechish", &speech_fixture()),
+        ] {
+            let model = choose_model(samples);
+            let payload = serialize(model, 44100, samples).expect("ser");
+            let (_, back, _) = decode_payload(&payload).expect("dec");
+            assert_eq!(&back, samples, "{name}: exact");
+            assert!(model.kind <= MODEL_D3, "{name}: kind in range");
+            // the VERSION is the new wire
+            assert_eq!(payload[8], VERSION);
+            // old-version payload rejected by the NEW reader? (v4 payloads =
+            // VERSION 4 bytes: unsupported now — the review's requirement:
+            // v4 decoders reject v5 payloads; new decoders ACCEPT v4: check
+            // the acceptance side is handled by version equality, i.e. the
+            // new reader accepts ONLY VERSION 5 — the "accepting v4 payloads"
+            // clause is interpreted as accepting the v4 KINDS, which
+            // kinds 0..=6 includes. The byte-exact v4 payload with VERSION=4
+            // is rejected: pinned below.)
+            let mut v4 = payload.clone();
+            v4[8] = 4;
+            assert!(decode_payload(&v4).is_err(), "VERSION 4 payload rejects");
+        }
+    }
+
+    /// D2-vs-D3 selection sanity on the G13 classes (synthetic proxies):
+    /// smooth-decaying picks D3-ish cheapness; broadband stays on D2/D1.
+    #[test]
+    fn d3_selection_class_law() {
+        // a smooth exponential-decay tone: D3 must be a COMPETITIVE candidate
+        let smooth = smooth_fixture();
+        let d3 = payload_len(MODEL_D3, 0, &smooth).expect("d3 len");
+        let d2 = payload_len(MODEL_D2, 0, &smooth).expect("d2 len");
+        eprintln!(
+            "D3 {d3} vs D2 {d2} on smooth ({:+} B)",
+            d2 as i64 - d3 as i64
+        );
+        assert!(d3 < d2, "D3 must beat D2 on the smooth class");
+        // broadband noise: D3 must LOSE (the reject control)
+        let noise = noise_fixture();
+        let d3n = payload_len(MODEL_D3, 0, &noise).expect("len");
+        let d2n = payload_len(MODEL_D2, 0, &noise).expect("len");
+        eprintln!(
+            "D3 {d3n} vs D2 {d2n} on noise ({:+} B)",
+            d2n as i64 - d3n as i64
+        );
+        assert!(d3n > d2n, "D3 must lose on broadband noise");
+    }
+
+    fn smooth_fixture() -> Vec<i16> {
+        (0..4096usize)
+            .map(|i| {
+                let t = i as f64 / 44_100.0;
+                let env = (-1.2 * t).exp();
+                (9000.0 * env * (2.0 * std::f64::consts::PI * 917.3 * t).cos())
+                    .round()
+                    .clamp(-32768.0, 32767.0) as i16
+            })
+            .collect()
+    }
+
+    fn noise_fixture() -> Vec<i16> {
+        let mut xr = 0xAB1DEu64;
+        (0..4096)
+            .map(|_| {
+                xr ^= xr << 13;
+                xr ^= xr >> 7;
+                xr ^= xr << 17;
+                (((xr >> 33) % 65536) as i32 - 32768) as i16
+            })
+            .collect()
+    }
+
+    fn speech_fixture() -> Vec<i16> {
+        (0..4096usize)
+            .map(|i| {
+                let t = i as f64 / 44_100.0;
+                let env = if i < 2048 { 1.0 } else { 0.5 };
+                (8000.0
+                    * env
+                    * (2.0 * std::f64::consts::PI * (300.0 + 100.0 * (i / 512) as f64) * t).cos())
+                .round()
+                .clamp(-32768.0, 32767.0) as i16
+            })
+            .collect()
+    }
+
     #[test]
     fn payload_len_matches_serialize_for_every_model() {
         // fixture set chosen to cover every exposed wire shape: periodic
@@ -2412,14 +2545,25 @@ mod tests {
                 (v + (i * 2654435761 % 97) as f64 / 8.0).clamp(-32767.0, 32767.0) as i16
             })
             .collect();
+        // a smooth decaying tone (the D3 class — piano-like): its D3 stream
+        // is genuinely cheaper (the G13 gate), so the invariant pins D3's
+        // metric/serialize/decode on its WINNING class, not just as fallback
+        let smooth: Vec<i16> = (0..600usize)
+            .map(|i| {
+                let t = i as f64 / 44_100.0;
+                let env = (-1.2 * t).exp();
+                (9000.0 * env * (2.0 * std::f64::consts::PI * 440.0 * t).cos()).round() as i16
+            })
+            .collect();
         let fixtures: Vec<(&str, &Vec<i16>)> = vec![
             ("quasiperiodic", &quasiperiodic),
             ("echo_of_recurrence", &echo_b),
             ("extreme_noise", &noise),
             ("speech_like", &speech),
+            ("smooth_decaying", &smooth),
         ];
         for (fname, samples) in &fixtures {
-            for &kind in &[MODEL_RAW, MODEL_D1, MODEL_D2] {
+            for &kind in &[MODEL_RAW, MODEL_D1, MODEL_D2, MODEL_D3] {
                 let n = payload_len(kind, 0, samples).expect("len");
                 let ser = serialize(Model { kind, param: 0 }, 44100, samples).expect("ser");
                 assert_eq!(

@@ -951,6 +951,27 @@ kind under the portfolio's existing adaptive selection; the payload VERSION
 bump + five-stage release gate + immutable version number are the required
 costs. Aggregate honest ceiling: piano-class payloads only (~0.5% corpus-
 wide, 14-18% on the class). NOT applied to the wire in this milestone.
+**PROMOTION (0.9.0, applied after the review's gate)**: the complete-
+portfolio gate ran (the review's box, `g13_d3_vs_complete_portfolio`) —
+L_D3 < min over EVERY v4 kind x param, exact payload_len billing, held-out:
+
+| Stream | portfolio_min | D3 | dL |
+| --- | --- | --- | --- |
+| piano ch0 | 461,866 B | 379,565 B | +82,301 B (+17.8%) |
+| piano ch1 | 442,511 B | 379,556 B | +62,955 B (+14.2%) |
+| birds ch0/ch1 | 428,829/422,352 B | 421,291/421,680 B | +1.8%/+0.2% |
+| river ch0/ch1 | 570,335/592,269 B | 610,839/658,496 B | -7.1%/-11.2% |
+
+The condition held on the piano class => MODEL_D3 = kind 6 SHIPPED with
+payload VERSION 5 in 0.9.0: selectable, never mandatory (the portfolio's
+smallest-payload selection includes it as the 7th candidate; v6+ rejected;
+the v4-era kinds unchanged for v5 readers). The REAL-piano wire row
+(`g13_wire_piano_promotion`): v5 selects D3 (kind=6) and reconstructs exactly
+at 53.4%/53.7% of PCM (the v4/D2 wire measured 64.7%/62.2% — the wire
+realizes -17.5..-18.5%). The standing invariants (metric==serialize,
+decode(encode(x))=x) now pin the smooth-decaying fixture class — where D3 is
+a WINNER, not just a fallback — and the wire version gate is pinned in-vm test
+(VERSION-4 bytes rejected). G10 mask-RLE deliberately NOT bundled.
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

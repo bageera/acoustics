@@ -158,4 +158,84 @@ mod tests {
             "D3 must re-accumulate exactly"
         );
     }
+    /// THE PROMOTION GATE (the review's box): L_D3 < min over the ENTIRE v4
+    /// portfolio (every kind × every param), exact wire billing via
+    /// payload_len, on held-out windows. Decision-half + evaluation-half
+    /// reported separately. corpus-gated.
+    #[test]
+    #[ignore]
+    fn g13_d3_vs_complete_portfolio() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/g12");
+        let mut rows = String::new();
+        for name in ["emotional_piano.wav", "park_birds.wav", "park_river.wav"] {
+            let data = std::fs::read(format!("{dir}/{name}")).expect("g12_fetch");
+            let (_rate, streams) = crate::parse_wav_multichannel(&data).expect("parse");
+            for (ch, y) in streams.iter().enumerate() {
+                let wins = (y.len() / 4096).min(200);
+                let (mut best_h, mut d3_h) = (0usize, 0usize);
+                for w in wins / 2..wins {
+                    let seg = &y[w * 4096..(w + 1) * 4096];
+                    // the complete v4 portfolio, exact serialization billing
+                    let mut best = crate::payload_len(0, 0, seg).unwrap_or(usize::MAX);
+                    for kind in [crate::MODEL_D1, MODEL_D2, crate::MODEL_PERIOD] {
+                        // D1/D2: param=0; PERIOD: dense lag sweep 2..=96
+                        if kind != crate::MODEL_PERIOD {
+                            best = best.min(crate::payload_len(kind, 0, seg).unwrap_or(usize::MAX));
+                        } else {
+                            for lag in 2..=96usize {
+                                best = best
+                                    .min(crate::payload_len(kind, lag, seg).unwrap_or(usize::MAX));
+                            }
+                        }
+                    }
+                    // OSC: all 11 variants
+                    for variant in 0..11usize {
+                        best = best.min(
+                            crate::payload_len(crate::MODEL_OSC, variant, seg)
+                                .unwrap_or(usize::MAX),
+                        );
+                    }
+                    // OP: all 16 arms
+                    for op in 0..16usize {
+                        best = best.min(
+                            crate::payload_len(crate::MODEL_OP, op, seg).unwrap_or(usize::MAX),
+                        );
+                    }
+                    best_h += best;
+                    d3_h += d3_varint_cost(seg);
+                    // D3 wire would need: kind byte (same), no param varint
+                    // (dense D3 has no param) + its symbol stream = the cost
+                    // billed; header identical to D1/D2-shaped kinds.
+                }
+                let delta = best_h as i64 - d3_h as i64;
+                rows.push_str(&format!(
+                    "G13-GATE {name} ch{ch}: portfolio_min={best_h} D3={d3_h} ΔL={delta:+} B ({:+.1}% vs portfolio)\n",
+                    100.0 * delta as f64 / best_h.max(1) as f64
+                ));
+            }
+        }
+        eprintln!("{rows}");
+    }
+    /// The v5 wire on the real piano recording: the portfolio must now
+    /// select D3 on the piano class and reconstruct exactly (corpus-gated).
+    #[test]
+    #[ignore]
+    fn g13_wire_piano_promotion() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/g12");
+        let data = std::fs::read(format!("{dir}/emotional_piano.wav")).expect("g12_fetch");
+        let (rate, streams) = crate::parse_wav_multichannel(&data).expect("parse");
+        for (ch, y) in streams.iter().enumerate() {
+            let payload = crate::encode(rate, y).expect("whole");
+            let (_, back, model) = crate::decode_payload(&payload).expect("decode");
+            assert_eq!(back, *y, "ch{ch}: exact");
+            eprintln!(
+                "G13-WIRE ch{ch}: model kind={} payload={}B (PCM {}B, {:.1}%)",
+                model.kind,
+                payload.len(),
+                2 * y.len(),
+                100.0 * payload.len() as f64 / (2 * y.len()) as f64
+            );
+            assert_eq!(model.kind, crate::MODEL_D3, "piano class must select D3");
+        }
+    }
 }

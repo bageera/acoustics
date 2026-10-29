@@ -4,7 +4,7 @@
 
 A reversible audio-model codec research engine. Every payload decodes to the exact original samples; every experiment pays a measured, explicit information cost.
 
-**Current state (2026-10):** wire v4 (`RAW`/`D1`/`D2`/`PERIOD`/`OSC`/`OP 0..15`, mask-RLE on OP), 80 tests + 3 corpus-gated (2× G12, 1× G13), published to [crates.io](https://crates.io/crates/manifold-acoustics) as 0.7.0 → 0.8.0 → 0.8.1 → 0.8.2 with the release gate `scripts/release-gate.sh` (five stages: fmt/clippy/release tests + exact-CLI roundtrip → `package --locked` + tarball audit → consumer FROM THE PACKAGED CRATE → numeric regression → publish behind `ACOUSTICS_RELEASE=1`). The research record now runs the G-line — attribution (G7), coefficient budget (G8), bitstream anatomy (G9), uniform masks (G10), residual audit (G11-A), acoustic diversity (G12), D3 residual coding (G13) — every result with its honest verdict in [docs/science.md](docs/science.md) §8; highlights below.
+**Current state (2026-10):** wire v5 (`RAW`/`D1`/`D2`/`D3`/`PERIOD`/`OSC`/`OP 0..15`, mask-RLE on OP), 82 tests + 5 corpus-gated tests, publishing to [crates.io](https://crates.io/crates/manifold-acoustics) as 0.7.0 → 0.8.0 → 0.8.1 → 0.8.2 → **0.9.0 (D3 promotion)** with the release gate `scripts/release-gate.sh` (five stages: fmt/clippy/release tests + exact-CLI roundtrip → `package --locked` + tarball audit → consumer FROM THE PACKAGED CRATE → numeric regression → publish behind `ACOUSTICS_RELEASE=1`). The research record now runs the G-line — attribution (G7), coefficient budget (G8), bitstream anatomy (G9), uniform masks (G10), residual audit (G11-A), acoustic diversity (G12), D3 residual coding (G13) — every result with its honest verdict in [docs/science.md](docs/science.md) §8; highlights below.
 
 
 The measured research record — foundations, per-milestone experiments, and the
@@ -25,6 +25,7 @@ The encoder serializes each candidate completely *in the payload format itself*,
 | `RAW` (0) | exact reference | one zigzag varint per sample |
 | `D1` (1) | first-order differences | residual stream (first sample coded directly) |
 | `D2` (2) | second-order differences | second-derivative residual stream |
+| `D3` (6, v5) | third-order differences | third-derivative residual stream — the G12/G13 class-conditional win: piano +14-17.8% vs the complete v4 portfolio (held-out, both channels) — selectable (broadband rejects, so portfolio picks it only when it wins) |
 | `PERIOD` (3) | difference vs. earlier sample at lag L | dense lag sweep 2..=96, per-32-sample selection bitmasks, nonzero residual varint stream |
 | `OSC` (4) | damped-oscillator family (3 families × 2 grids) | family fields + masked corrections |
 
@@ -243,7 +244,7 @@ controls. Full tables in science.md §8.2-8.18; the honest ledger:
 | G10 uniform mask RLE | real, small | +2,853 B (2.5%) on PERIOD-2; RLE LOSES on dense word masks (adaptive M2 required); corpus-wide ~0.5% |
 | G11-A residual audit | floor identified | long streams 16-16.5% above H0 — the integral varint floor; only a fractional-bit backend reaches it (gated, unbuilt) |
 | G12 acoustic diversity | the first genuine new signal | music/environment = D2 (62-72% of PCM, exact); lag-1 Hcond 42-67% below actual at n >= 700k — the structure speech never had |
-| G13 D3 residual coding | **class-conditional win** | piano +14.0-17.6% held-out vs D2; river -7.4..-8.1% (dies on stochastic streams, as the noise reject predicts) — an adaptive-kind wire candidate |
+| G13 D3 residual coding | **PROMOTED (v5 wire)** | piano +14.0-17.6% held-out vs D2; river -7.4..-8.1% (dies on stochastic streams, as the noise reject predicts) — an adaptive-kind wire candidate |
 
 Corpus instrumentation: `scripts/g5f_fetch.sh` (speech, in-repo) and
 `scripts/g12_fetch.sh` (music/environment, 239 MB, hash-locked, gitignored

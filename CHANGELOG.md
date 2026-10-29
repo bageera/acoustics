@@ -3,7 +3,10 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
+## [Unreleased]
+
 ### Measured (research only)
+
 
 - **G4 additive modal models — DENIED, cascade mechanism named**
   (`src/modal.rs`, research-only): greedy line-scan seeding (G4-A) + varpro
@@ -27,6 +30,29 @@ Format based on Keep a Changelog; versioning is SemVer.
   model's own residual. Decision: a context coder on the correction stream is
   JUSTIFIED as the next wire milestone (payload VERSION 5); no new generative
   family first. science.md §8.7.
+## [0.9.0] — 2026-10-29
+
+### Added
+
+- **MODEL_D3 (kind 6) — payload VERSION 5** (G12→G13, `src/g13.rs`): third-order
+  differences; the first new production model since v0.2 and the first earned by
+  the complete-portfolio gate. Held-out vs the ENTIRE v4 portfolio: piano
+  +17.8%/+14.2% (both channels), birds +1.8%/+0.2%, river −7.1/−11.2% — D3 is
+  SELECTABLE (the portfolio picks it only when it wins; broadband rejects).
+  Real-piano wire rows: v5 selects D3 and reconstructs exactly at 53.4%/53.7%
+  of PCM (was 64.7%/62.2% = −17.5..−18.5%). Invariants cover the
+  smooth-decaying fixture class; the third-difference accumulation is
+  hand-traced + round-trip pinned; v6+ rejected.
+
+### Measured (research only)
+
+- G13 instruments (`src/g13.rs`): held-out D3-vs-D2 benchmark, the
+  complete-portfolio promotion gate, and the wire promotion test
+  (corpus-gated, `scripts/g12_fetch.sh`).
+- G12 acoustic-diversity corpus (`src/g12.rs` + `scripts/g12_fetch.sh`): piano
+  = D2 170/172 windows (62-65% of PCM); field recordings = D2/D1 sweeps;
+  speech = the only mixed class; lag-1 Hcond 42-67% below actual at n ≥ 700k.
+
 ## [0.8.2] — 2026-10-28
 
 ### Fixed

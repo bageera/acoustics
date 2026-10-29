@@ -86,7 +86,7 @@ fn ledger(model: crate::Model, rate: u32, samples: &[i16]) -> (Vec<Span>, Vec<u8
                 end: payload.len(),
             });
         }
-        crate::MODEL_D1 | crate::MODEL_D2 => {
+        crate::MODEL_D1 | crate::MODEL_D2 | crate::MODEL_D3 => {
             spans.push(Span {
                 category: "residuals",
                 begin: pos,
