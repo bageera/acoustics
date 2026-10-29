@@ -32,6 +32,11 @@ Format based on Keep a Changelog; versioning is SemVer.
   family first. science.md §8.7.
 ## [0.9.0] — 2026-10-29
 
+> Published to crates.io; verified by registry read-back + a fresh
+> path-free consumer built from the registry: encode/decode exact, the new
+> `MODEL_D3 = 6` const resolves, the full research surface callable.
+
+
 ### Added
 
 - **MODEL_D3 (kind 6) — payload VERSION 5** (G12→G13, `src/g13.rs`): third-order
