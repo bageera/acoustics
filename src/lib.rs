@@ -41,6 +41,10 @@ pub mod g8;
 #[cfg(test)]
 pub(crate) mod g9;
 
+/// G10 research (uniform mask representation) — research-only.
+#[cfg(test)]
+pub(crate) mod g10;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;

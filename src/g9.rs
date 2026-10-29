@@ -400,6 +400,126 @@ fn ledger(model: crate::Model, rate: u32, samples: &[i16]) -> (Vec<Span>, Vec<u8
     (spans, payload)
 }
 
+/// Extract the payload's mask WORD segments (the production layout: PERIOD
+/// masks after the lag varint; OSC f0 count-2, f1/f2 count, f3 per-stage;
+/// D1/D2 = dense residual stream WITHOUT mask words — empty).
+#[cfg(test)]
+pub(crate) fn extract_mask_segments(
+    model: crate::Model,
+    rate: u32,
+    samples: &[i16],
+) -> Vec<Vec<u32>> {
+    let payload = crate::serialize(model, rate, samples).expect("serialize");
+    let count = samples.len();
+    let mut pos = 14usize;
+    // count varint
+    pos += varint_len(count as u64);
+    // param varint
+    if model.kind == MODEL_PERIOD || model.kind == MODEL_OSC || model.kind == MODEL_OP {
+        pos += varint_len(model.param as u64);
+    }
+    read_flat_masks(model, &payload, &mut pos, count)
+}
+
+/// Continue the walk at `pos` into the mask segments (post-header).
+#[cfg(test)]
+fn read_flat_masks(
+    model: crate::Model,
+    payload: &[u8],
+    pos: &mut usize,
+    count: usize,
+) -> Vec<Vec<u32>> {
+    match model.kind {
+        MODEL_PERIOD => {
+            let words = (count - model.param).div_ceil(32);
+            vec![flat(payload, pos, words)]
+        }
+        MODEL_OSC => {
+            let family = crate::osc_variant_family(model.param);
+            let grid = crate::osc_variant_grid(model.param);
+            match family {
+                0 => {
+                    *pos += 4; // y0/y1 seeds
+                    *pos += if grid == 2 {
+                        vlen(payload, *pos) + vlen(payload, *pos + vlen(payload, *pos))
+                    } else {
+                        8
+                    };
+                    vec![flat(payload, pos, (count - 2).div_ceil(32))]
+                }
+                1 => {
+                    *pos += if grid == 2 {
+                        vlen(payload, *pos) + vlen(payload, *pos + vlen(payload, *pos))
+                    } else {
+                        8
+                    };
+                    vec![flat(payload, pos, count.div_ceil(32))]
+                }
+                2 => {
+                    *pos += 8; // amp + rq i32
+                    for _ in 0..5 {
+                        *pos += vlen(payload, *pos);
+                    }
+                    vec![flat(payload, pos, count.div_ceil(32))]
+                }
+                _ => {
+                    // f3: stage count + per-stage (c, r); one seg per stage
+                    let n = vlen(payload, *pos);
+                    let stages = vint_value(payload, *pos, n);
+                    *pos += n;
+                    for _ in 0..stages {
+                        *pos += vlen(payload, *pos);
+                        *pos += vlen(payload, *pos);
+                    }
+                    let seg_words = count.div_ceil(32);
+                    (0..stages)
+                        .map(|k| flat(payload, &mut (*pos + k * seg_words * 4), seg_words))
+                        .collect()
+                }
+            }
+        }
+        MODEL_OP => {
+            // OP masks are ALREADY RLE on the wire — the M-arms are moot here
+            // (G9: 3 B on silence); no flat words to re-encode.
+            Vec::new()
+        }
+        _ => Vec::new(), // RAW/D1/D2: no mask words on the wire
+    }
+}
+
+#[cfg(test)]
+fn vint_value(payload: &[u8], at: usize, n: usize) -> usize {
+    let mut v = 0u64;
+    let mut shift = 0;
+    for &b in payload[at..at + n].iter() {
+        v |= ((b & 0x7F) as u64) << shift;
+        shift += 7;
+    }
+    v as usize
+}
+
+#[cfg(test)]
+fn flat(payload: &[u8], pos: &mut usize, words: usize) -> Vec<u32> {
+    let b = payload[*pos..*pos + words * 4].to_vec();
+    *pos += words * 4;
+    b.chunks_exact(4)
+        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+        .collect()
+}
+
+#[cfg(test)]
+fn vlen(payload: &[u8], at: usize) -> usize {
+    let mut n = 0usize;
+    loop {
+        let b = payload[at + n];
+        n += 1;
+        if b & 0x80 == 0 {
+            break;
+        }
+    }
+    n
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

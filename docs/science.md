@@ -780,6 +780,46 @@ layout, killing the G7-A estimator class of error).
    ~0% on others — a candidate WIRE change (mask RLE outside OP needs a
    version bump + the full release gate), recorded for a version-bump
    decision, NOT made here.
+### 8.15 G10 — uniform mask representation (measured; small real win, wire decision open)
+
+The G9 review's mask-only ablation (`src/g10.rs` + `g9::extract_mask_segments`,
+research-only): M0 = shipped fixed-width words (frozen control), M1 = the
+verified OP zero-run-first RLE billed from the REAL writer, M2 = adaptive
+min(M0, M1) + 1 B selector. Residual bytes untouched — ΔL_complete =
+ΔL_mask − selector exactly.
+
+Boundary cases verified (the review's required list): all-zero, all-one,
+sparse, dense, set-word start, alternating runs, 127/128 and 16383/16384
+varint-boundary runs, exact mask round-trips, per-stage segment boundaries
+preserved, dense/random fallback to fixed (asserted), metric == bytes.
+
+| Stream (kind) | mask words | M0 | M1 | M2 | ΔL_complete |
+| --- | --- | --- | --- | --- | --- |
+| example_word ch0/ch1 (D1 — no mask words) | 0 | 0 | 0 | 0 | 0 |
+| can_you_stop ch0 (PERIOD-2) | 2,592 | 10,368 | 7,514 | 7,515 | **+2,853 B (2.5% of payload)** |
+| sample2 ch0/ch1 (D1) | 0 | 0 | 0 | 0 | 0 |
+| two-tone (OSC cascade, 1 stage) | 128 | 512 | 516 | 513 | **−1 B (RLE loses)** |
+
+Findings:
+1. RLE realizes its promise exactly where masks are SPARSE AT THE WORD LEVEL
+   (period-lag streams with corrections clustered): −2,854 B on
+   can_you_stop's mask table. On DENSE word masks (the tonal cascade's
+   correction stream) it LOSES (516 vs 512 B; with the selector −1) — the
+   review's "RLE can lose on irregular masks" measured true, and M2's
+   adaptive selection is therefore REQUIRED, not optional.
+2. The corpus-wide honest ceiling: +2,853 B of +607,000 B ≈ **0.47%** —
+   G9's 9.1% single-payload bound was the ceiling; RLE realizes 27.5% of
+   the mask bytes on the one stream where they exist, which is 2.5% of
+   that payload.
+3. D1 speech (the dominant kind on the corpus): zero mask bytes — there is
+   nothing to save. The aggregate win is bounded by the PERIOD-class
+   payload share.
+
+Wire-milestone decision (OPEN, user's call): extending mask RLE beyond OP
+would need a payload VERSION bump + the full five-stage release gate for a
+measured ~0.5% corpus-wide saving (max measured 2.5% on PERIOD-class
+payloads). Recorded honestly both directions: real but small; the residual
+stream (91-100% of bytes) remains the materially larger program.
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

@@ -136,6 +136,18 @@ Format based on Keep a Changelog; versioning is SemVer.
   exact at the wire). Mask-RLE-outside-OP recorded as a possible future WIRE
   change (version bump + full release gate required). science.md 8.14.
 
+### Measured (research only)
+
+- **G10 uniform mask representation measured** (`src/g10.rs` +
+  `g9::extract_mask_segments`): mask-only ablation with residuals untouched.
+  M2 (adaptive fixed/RLE, 1-B selector) saves 2,853 B (2.5%) on the PERIOD-2
+  real-speech payload, LOSES 1 B on the tonal cascade's dense mask words
+  (adaptive selection required, not optional), saves 0 on D1 (no mask words
+  on the wire). All boundary cases verified: sparse/dense, alternating runs,
+  set-word starts, varint boundaries 127/128 and 16383/16384, exact
+  round-trips, dense/random fallback asserted. Corpus-wide ceiling ~0.5%.
+  Wire-bump decision OPEN (user's call); science.md 8.15.
+
 ## [Unreleased]
 
 ### Measured (research only)
