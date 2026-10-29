@@ -7,6 +7,17 @@ Format based on Keep a Changelog; versioning is SemVer.
 
 ### Added
 
+- **crates.io release**: the engine ships as the `manifold-acoustics` crate
+  (version 0.7.0; the lib crate name for imports remains `acoustics`).
+  MIT LICENSE file added; Cargo.toml carries repository/keywords/categories
+  metadata and the README. Verified live via the crates.io registry API and
+  a fresh consumer project (`manifold-acoustics = "0.7.0"`) whose
+  encode → decode → exact-equality smoke test passes.
+  Packaging commit `a172709`; keyword-length fix follow-up `0147d33`.
+## [Unreleased]
+
+### Added
+
 - **G3 — representation-space discovery** (`src/g3.rs`; research-only,
   v0.7/G2 untouched): the charged ΔL measurement
   `ΔL_T = L_best(x) − [L(T) + L_best(T⁻¹(x))]` over fully specified
