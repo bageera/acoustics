@@ -27,6 +27,19 @@ Format based on Keep a Changelog; versioning is SemVer.
   model's own residual. Decision: a context coder on the correction stream is
   JUSTIFIED as the next wire milestone (payload VERSION 5); no new generative
   family first. science.md §8.7.
+## [0.8.0] — 2026-10-28
+
+### Added
+
+- The research container modules ship inside the crate (research-only APIs;
+  the v0.7 wire format is unchanged): `nested` (compositional echo),
+  `phase` (phase-trajectory discovery), `modal` (additive modal models),
+  `g3` (charged ΔL representation-space measurement), `g5` (innovations
+  anatomy — the winning cascade's residual carries a 65.7% coder gap;
+  D1-context −18.6% measured).
+- Payload VERSION 4 (RAW literal submode, mask RLE, OP battery) — first
+  published version carrying the v0.7-era wire.
+
 ## [Unreleased]
 
 ### Measured (research only)

@@ -1,8 +1,8 @@
 [package]
 name = "manifold-acoustics"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
-description = "ACOUSTICS - Mathematical & Physics-Informed Audio Research Engine: exact reversible audio models ranked by complete serialized description length (MDL), pre-dimensionality battery, compositional echo research"
+description = "ACOUSTICS - Mathematical & Physics-Informed Audio Research Engine: exact reversible audio models ranked by complete serialized description length (MDL); pre-dimensionality battery, compositional echo, innovations anatomy"
 license = "MIT"
 repository = "https://github.com/bageera/acoustics"
 readme = "README.md"
