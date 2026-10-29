@@ -6,7 +6,7 @@ description = "ACOUSTICS - Mathematical & Physics-Informed Audio Research Engine
 license = "MIT"
 repository = "https://github.com/bageera/acoustics"
 readme = "README.md"
-keywords = ["audio", "codec", "compression", "lossless", "algorithmic-information"]
+keywords = ["audio", "codec", "compression", "lossless"]
 categories = ["compression", "multimedia::audio", "science"]
 
 [lib]
