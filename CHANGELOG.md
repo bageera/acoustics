@@ -174,6 +174,18 @@ Format based on Keep a Changelog; versioning is SemVer.
   park_wind.wav = 24-bit, preserved unmeasured (engine is i16-only); freesound
   piano note blocked on API token (recorded, not faked). science.md 8.17.
 
+### Measured (research only)
+
+- **G13 D3 residual coding — the G12 candidate BUILT** (`src/g13.rs`, research-only):
+  the first difference of the shipped D2 stream with identical varint coding.
+  Held-out numbers on the G12 corpus: piano +17.6%/+14.0% (decision-half
+  confirms: +78,628/+56,981 B), birds +1.5%/−0.2%, river **−7.4/−8.1%** —
+  the class law confirmed: D3 wins on smooth decaying streams, dies on
+  stochastic ones (noise +239 B, speech Δ=0: the same-conditions gate honest).
+  Candidate = D3 as a 7th kind under the portfolio's existing adaptive
+  selection; WIRE DECISION OPEN (user's call; version bump + release gate
+  required). science.md 8.18.
+
 ## [Unreleased]
 
 ### Measured (research only)

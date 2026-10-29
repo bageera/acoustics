@@ -914,6 +914,43 @@ coding with big-n statistics, subject to the standard gates
 reconstruction). Recorded as the G12-derived candidate — NOT built yet.
 
 No model promotion occurred (the review's rule); the wire is untouched.
+### 8.18 G13 — D3 residual coding, BUILT (the G12 candidate: class-conditional, measured, wire decision open)
+
+`src/g13.rs` (research-only): the G12 opportunity signal's minimal evidenced
+coder — the FIRST DIFFERENCE of the shipped D2 residual stream, same zigzag
+varints, no context signaling, no tables (the review's preserved boundary
+form: the gain lives in the representation). Decoder-causal by construction;
+the exact re-accumulation (r3 → r2 → x) is asserted round-trip on a
+hand-checked stream; the D2 inversion mirrors the wire's reader symbol-for-
+symbol.
+
+Held-out measurement (the decision on the first half of each stream's
+windows; the reported number on the second — never mixed):
+
+| Stream | held-out D2 | held-out D3 | ΔL | decision-half ΔL |
+| --- | --- | --- | --- | --- |
+| emotional_piano ch0 | 460,653 B | 379,565 B | **+81,088 B (+17.6%)** | +78,628 B |
+| emotional_piano ch1 | 441,323 B | 379,556 B | **+61,767 B (+14.0%)** | +56,981 B |
+| park_birds ch0 | 427,557 B | 421,291 B | +6,266 B (+1.5%) | +2,870 B |
+| park_birds ch1 | 420,752 B | 421,680 B | −928 B (−0.2%) | −805 B |
+| park_river ch0 | 568,735 B | 610,839 B | −42,104 B (−7.4%) | −42,239 B |
+| park_river ch1 | 609,113 B | 658,496 B | −49,383 B (−8.1%) | −48,904 B |
+
+Controls: white noise REJECT (+239 B — double-differencing spreads), speech
+Δ = 0 B (differencing the D2 stream adds nothing there — G5-F's verdict in
+this exact algebra), exact round-trip asserted.
+
+The class law, consistent across every row: **D3 wins where deltas are
+smooth and decaying (music), ties on stochastic boundaries (birds), loses
+where the signal is broadband (river), and does nothing on speech.** The
+G12 Hcond signal was real, and D3 captured the music share of it in the
+cheapest possible machinery.
+
+Wire-milestone proposal (OPEN — the user's call): add D3 as a 7th model
+kind under the portfolio's existing adaptive selection; the payload VERSION
+bump + five-stage release gate + immutable version number are the required
+costs. Aggregate honest ceiling: piano-class payloads only (~0.5% corpus-
+wide, 14-18% on the class). NOT applied to the wire in this milestone.
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

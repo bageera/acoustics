@@ -53,6 +53,10 @@ pub(crate) mod g11;
 #[cfg(test)]
 pub(crate) mod g12;
 
+/// G13 research (D3 residual coding — the G12 candidate) — research-only.
+#[cfg(test)]
+pub(crate) mod g13;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;

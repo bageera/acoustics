@@ -1,8 +1,11 @@
 # ACOUSTICS
 
-**Mathematical & Physics-Informed Audio Research Engine** — v0.5
+**Mathematical & Physics-Informed Audio Research Engine** — v0.8.2 (crate `manifold-acoustics`)
 
 A reversible audio-model codec research engine. Every payload decodes to the exact original samples; every experiment pays a measured, explicit information cost.
+
+**Current state (2026-10):** wire v4 (`RAW`/`D1`/`D2`/`PERIOD`/`OSC`/`OP 0..15`, mask-RLE on OP), 80 tests + 3 corpus-gated (2× G12, 1× G13), published to [crates.io](https://crates.io/crates/manifold-acoustics) as 0.7.0 → 0.8.0 → 0.8.1 → 0.8.2 with the release gate `scripts/release-gate.sh` (five stages: fmt/clippy/release tests + exact-CLI roundtrip → `package --locked` + tarball audit → consumer FROM THE PACKAGED CRATE → numeric regression → publish behind `ACOUSTICS_RELEASE=1`). The research record now runs the G-line — attribution (G7), coefficient budget (G8), bitstream anatomy (G9), uniform masks (G10), residual audit (G11-A), acoustic diversity (G12), D3 residual coding (G13) — every result with its honest verdict in [docs/science.md](docs/science.md) §8; highlights below.
+
 
 The measured research record — foundations, per-milestone experiments, and the
 honest-results contract — lives in [docs/science.md](docs/science.md)
@@ -199,7 +202,7 @@ candidate — the four v0.3 acceptance tests P1–P4 (drift over 44k samples, ra
 exact fit, anchor-stride tradeoff, LS-vs-DL fitting), the three v0.4 tests P5/P6/P6b
 (exact integer dynamics, mixtures, stage-count cost), and the six v0.5 feasibility
 tests F1a–F3 (strip geometry, decoder-representable search, entropy instruments,
-shuffle probe, latent-vs-closed-loop). Suite: 25 tests.
+shuffle probe, latent-vs-closed-loop). Suite: 80 tests (+ 3 corpus-gated G12/G13 tests that run after `scripts/g12_fetch.sh`).
 
 The `feas` research module (`acoustics::feas`, v0.5; wire format untouched) implements
 the description-length formulation as measurement machinery — strip-constraint
@@ -223,6 +226,29 @@ v0.4–v0.5 results" above.
 - The feasibility tier applies the strip geometry to exactly-evolving systems;
   feasibility polygons for truncated dynamics are decoder-defined, not half-plane-
   intersected (the measured distinction above).
+
+## Research record: the G-line (0.8.2, all research-only — wire v4 untouched)
+
+Every row measured under the standing gates: complete serialized-payload cost
+(`L_measured(M) = |serialize(M)|`), exact reconstruction, identical downstream
+corrections coding across arms, hash-locked real-audio corpora, negative
+controls. Full tables in science.md §8.2-8.18; the honest ledger:
+
+| Experiment | Verdict | Key numbers |
+|---|---|---|
+| G2 compositional echo | **positive on its class** | nested 195 B vs flat 4,129 / portfolio 580; noise reject |
+| G7 attribution | the "win" was an accounting artifact | shipped beats the best single OSC variant by 1.3-24% on real speech; coefficients local (refit beats transfer 8-16%) |
+| G8 coefficient budget | closed at the gate | stage coefficients = 0.09-0.10% of payload — even perfect prediction cannot matter |
+| G9 bitstream anatomy | residuals own the payload | 91-100% of real-speech bytes; masks only 9.1% (PERIOD-2) / 8.5% (cascade); the ledger comes from the REAL writer |
+| G10 uniform mask RLE | real, small | +2,853 B (2.5%) on PERIOD-2; RLE LOSES on dense word masks (adaptive M2 required); corpus-wide ~0.5% |
+| G11-A residual audit | floor identified | long streams 16-16.5% above H0 — the integral varint floor; only a fractional-bit backend reaches it (gated, unbuilt) |
+| G12 acoustic diversity | the first genuine new signal | music/environment = D2 (62-72% of PCM, exact); lag-1 Hcond 42-67% below actual at n >= 700k — the structure speech never had |
+| G13 D3 residual coding | **class-conditional win** | piano +14.0-17.6% held-out vs D2; river -7.4..-8.1% (dies on stochastic streams, as the noise reject predicts) — an adaptive-kind wire candidate |
+
+Corpus instrumentation: `scripts/g5f_fetch.sh` (speech, in-repo) and
+`scripts/g12_fetch.sh` (music/environment, 239 MB, hash-locked, gitignored
+with the sha-256s recorded in the script). Sources preserved exactly: 24-bit
+material kept in original form, unmeasured until the engine supports it.
 
 ## Where the research goes next
 
