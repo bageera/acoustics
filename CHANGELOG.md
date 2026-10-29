@@ -126,6 +126,16 @@ Format based on Keep a Changelog; versioning is SemVer.
   The dynamics-of-equations hypothesis is priced below every gain in the
   ledger. science.md 8.13.
 
+### Measured (research only)
+
+- **G9 bitstream anatomy COMPLETE** (`src/g9.rs`, test-gated): the production
+  writer's byte layout walked and categorized on the locked corpus — residuals
+  are 91-100% of every real-speech payload; masks 9.1% of the PERIOD-2 payload
+  (flat u32 table; mask RLE currently wired only for OP), 8.5% of the tonal
+  cascade payload; metadata/coefficient/seed/other ≤0.02% combined (G8's bound
+  exact at the wire). Mask-RLE-outside-OP recorded as a possible future WIRE
+  change (version bump + full release gate required). science.md 8.14.
+
 ## [Unreleased]
 
 ### Measured (research only)

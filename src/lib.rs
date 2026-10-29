@@ -37,6 +37,10 @@ pub mod g7;
 /// G8 research (coefficient dynamics) — never on the v4 wire.
 pub mod g8;
 
+/// G9 research (bitstream anatomy) — research-only, test-gated.
+#[cfg(test)]
+pub(crate) mod g9;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;

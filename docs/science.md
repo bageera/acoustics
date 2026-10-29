@@ -743,6 +743,43 @@ description on the locked corpus: there is nothing meaningful for coefficient
 dynamics to save. This is the cleanest possible honest negative: the budget
 ceiling was measured first, and it is two orders below the smallest gains the
 ledger records anywhere.
+### 8.14 G9 — bitstream anatomy (COMPLETE: where the winning bytes go)
+
+The review's harness (validator 5/5) + the production-writer ledger
+(`src/g9.rs`, test-gated): the walker reads the exact byte layout `serialize()`
+emits — same headers, field order, encodings — with every byte covered exactly
+once, no gaps/overlaps/unknown categories, asserted per stream (the review's
+five checks as test invariants; the ledger comes from the real writer's
+layout, killing the G7-A estimator class of error).
+
+**Anatomy (locked G5-F corpus, whole-file payloads + two synthetic kinds)**:
+
+| Stream (kind) | total | metadata | masks | residuals | coefficients | seeds/other |
+| --- | --- | --- | --- | --- | --- | --- |
+| example_word ch0 (D1) | 55,710 B | 17 | 0 | 55,693 (99.97%) | 0 | 0 |
+| example_word ch1 (D1) | 55,719 B | 17 | 0 | 55,702 | 0 | 0 |
+| can_you_stop ch0 (PERIOD-2) | 113,946 B | 17 | **10,368 (9.1%)** | 103,560 (90.9%) | 1 | 0 |
+| sample2 ch0 (D1) | 437,335 B | 17 | 0 | 437,318 (>99.99%) | 0 | 0 |
+| sample2 ch1 (D1) | 447,532 B | 17 | 0 | 447,515 | 0 | 0 |
+| two-tone (OSC cascade) | 6,052 B | 17 | **512 (8.5%)** | 5,515 (91.1%) | 8 | 0 |
+| silence (OP loop) | 23 B | 17 | 3 (RLE) | 0 | 0 | 3 |
+
+**Findings**:
+1. **The bytes are the residuals** — 91-100% of every real-speech payload.
+   The portfolio's wins are won inside the zigzag-RLE correction stream; no
+   other category registers above 9.1% anywhere measured.
+2. **Masks are the only remaining measurable cost on real speech** — exactly
+   9.1% of can_you_stop's payload (the flat u32 mask table on PERIOD/D1/D2/OSC
+   families — the same structural floor P5 exposed; the mask RLE is wired
+   ONLY for OP payloads, where it bills 3 B on silence). On tonal cascade
+   payloads the per-stage mask segments cost 8.5%.
+3. Metadata/coefficient/seeds/other: ≤0.02% combined on real speech —
+   G8's 0.1% coefficient bound reconfirmed at the wire; there is nothing
+   else to optimize outside masks + residuals.
+4. The honest ceiling for any future masks work: ~9% on SOME recordings,
+   ~0% on others — a candidate WIRE change (mask RLE outside OP needs a
+   version bump + the full release gate), recorded for a version-bump
+   decision, NOT made here.
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection
