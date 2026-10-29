@@ -363,6 +363,31 @@ control's exact 0 guards the accounting (any future transform whose ΔL
 computes nonzero under identity has a billing bug, and the invariant will
 name it).
 
+### 8.4 paste-G3-A — integer lifting before/after the portfolio (v0.8-dev)
+
+The work-order paste ranked reversible integer lifting as the easiest new
+family ("apply lifting before the OP portfolio"). Measured on the
+independent float-generated damped fixture and noise:
+
+| Placement | Composition | Complete cost (B) | vs the control |
+| --------- | ----------- | ----------------- | -------------- |
+| direct | lift(x), two streams | 615 vs best(x) **580** | **+35 loss** |
+| after echo (swept winner g3/D=64) | L(T_echo) + lift(y) = 3 + 0 + 102 + 100 = **205** vs echo-only 3 + 186 = **189** | | **+16 loss** |
+| after echo (G2-C pair g1/D=32) | 3 + 290 + 300 = **593** vs 3 + 565 = **568** | | **+25 loss** |
+
+Verdict: **lifting DENIED in every placement** on this fixture. Mechanism:
+Haar lifting is stream-SPLITTING — it cuts one well-modeled stream into two
+half-modeled streams whose serialized sum exceeds the unsplit cost, and the
+portfolio already contains the diff family (D1/D2), so the transform finds
+redundancy the portfolio's predictors already reach without paying the
+split. On noise the lift honestly rejects (odd-stream values spill i16 —
+no silent narrowing, the review's width rule held). This is the same law as
+the G6 quaternary probe (manifold, same day): re-layout is not a mechanism.
+
+Recorded for the record's completeness, NOT retained. The paste's remaining
+rows (phase-trajectory discovery, coupled oscillators, source–filter) stay
+queued in priority order.
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

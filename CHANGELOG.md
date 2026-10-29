@@ -5,6 +5,16 @@ Format based on Keep a Changelog; versioning is SemVer.
 
 ## [Unreleased]
 
+### Measured (research only)
+
+- **paste-G3-A: reversible integer lifting — DENIED in every placement**
+  (`src/g3.rs::lift_transform`): direct lift +35 B vs best(x); after echo
+  (swept winner g3/D=64) +16 B; after echo (G2-C pair) +25 B. Mechanism:
+  stream-splitting costs exceed the structure exposed; the portfolio's diff
+  family already covers the transform's redundancy. Noise case rejects
+  honestly (i16 spill, no silent narrowing). science.md §8.4.
+## [Unreleased]
+
 ### Added
 
 - **crates.io release**: the engine ships as the `manifold-acoustics` crate

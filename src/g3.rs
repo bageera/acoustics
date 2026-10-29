@@ -46,6 +46,52 @@ pub(crate) struct TransformOutcome {
     pub transform_cost: usize,
 }
 
+/// Haar integer lifting (the paste's §7-C, G3-A row): even/odd split with
+/// d = odd − even, s = even + floor(d/2) — EXACT inverse:
+/// even = s − floor(d/2), odd = d + even. Integer-only, parameter-free; L(T)
+/// bills the two streams' serialization through the standing portfolio (the
+/// split itself is both sides' fixed code, no wire params).
+/// Width: d spans ±64k ⇒ i32; s spans ±48k ⇒ i32; published as i16 only when
+/// they fit (the gate rejects spilling candidates honestly per the review rule).
+/// Lift transform of x: even samples keep positions 2k (stream 0), odd deltas
+/// are stream 1. Serialization order = all evens, then all odds (stream-major).
+fn lift_transform(samples: &[i16]) -> Option<TransformOutcome> {
+    let n = samples.len();
+    if n < 4 || !n.is_multiple_of(2) {
+        return None;
+    }
+    let x64: Vec<i64> = samples.iter().map(|&s| s as i64).collect();
+    let mut evens = Vec::with_capacity(n / 2);
+    let mut odds = Vec::with_capacity(n / 2);
+    for k in 0..n / 2 {
+        let a = x64[2 * k];
+        let b = x64[2 * k + 1];
+        let d = b - a;
+        let s_i = a + d.div_euclid(2);
+        evens.push(s_i);
+        odds.push(d);
+    }
+    // publish honestly: any stream value outside i16 makes the LIFTED
+    // representation not directly codable through the portfolio — reject the
+    // candidate (the review rule: no silent narrowing).
+    if evens
+        .iter()
+        .chain(odds.iter())
+        .any(|&v| !(i16::MIN as i64..=i16::MAX as i64).contains(&v))
+    {
+        return None;
+    }
+    Some(TransformOutcome {
+        name: "lift",
+        streams: vec![
+            evens.iter().map(|&v| v as i16).collect(),
+            odds.iter().map(|&v| v as i16).collect(),
+        ],
+        corrections: Vec::new(),
+        transform_cost: 0,
+    })
+}
+
 /// Echo transform of x into y = echo_inverse(x, g, D): publishes y (i16-clamped,
 /// same as v0.7) and codes the echo-forward corrections r = x − echo_fwd(y).
 fn echo_transform(samples: &[i16], gsel: usize, d_run: usize) -> Option<TransformOutcome> {
@@ -241,6 +287,78 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// Paste-G3-A: echo INVERSE then LIFT — a two-transform composition before
+    /// the inner portfolio. ΔL vs the direct best decides whether the second
+    /// representation exposes anything the first did not.
+    #[test]
+    fn paste_g3_a_lift_after_echo_independent_damped() {
+        let base_f: Vec<f64> = (0..4096usize)
+            .map(|i| {
+                let t = i as f64 / 44100.0;
+                12000.0
+                    * (-18400.0 * t).exp()
+                    * (2.0 * std::f64::consts::PI * 917.3 * t + 0.37).cos()
+            })
+            .collect();
+        let g = OP_GAINS[1];
+        let x: Vec<i16> = (0..4096usize)
+            .map(|i| {
+                let e = if i >= 32 {
+                    (base_f[i - 32] * g as f64 / OSC_Q15 as f64).round() as i64
+                } else {
+                    0
+                };
+                clamp_i16(base_f[i].round() as i64 + e)
+            })
+            .collect();
+        // both at the swept best pair AND the G2-C fixed pair, honestly
+        for (gsel, d_run) in [(3usize, 64usize), (1usize, 32usize)] {
+            let t_echo = echo_transform(&x, gsel, d_run).expect("echo");
+            let y = &t_echo.streams[0];
+            let t_lift = lift_transform(y).expect("lift on the echo intermediate");
+            let d_echo_only = delta_l(&x, &t_echo);
+            let d_echo_lift = delta_l(&x, &t_echo) - best_portfolio(y) as i64
+                + (best_portfolio(&t_lift.streams[0]) + best_portfolio(&t_lift.streams[1])) as i64;
+            let by = best_portfolio(y);
+            let bs = best_portfolio(&t_lift.streams[0]);
+            let bd = best_portfolio(&t_lift.streams[1]);
+            eprintln!(
+            "paste-G3-A g{gsel} d{d_run}: ΔL_echo={d_echo_only} ΔL_echo+lift={d_echo_lift} (best y={by} s={bs} d={bd})"
+        );
+        } // sweep pairs
+          // the paste's literal arm: lift DIRECTLY on x
+        if let Some(t_direct) = lift_transform(&x) {
+            let total_direct: usize = t_direct.streams.iter().map(|st| best_portfolio(st)).sum();
+            eprintln!(
+                "paste-G3-A direct-lift: streams total {total_direct} vs best(x) {}",
+                best_portfolio(&x)
+            );
+        } else {
+            eprintln!("paste-G3-A direct-lift rejected (spill)");
+        }
+    }
+
+    /// LIFT's noise law: on random PCM the lift must measure ΔL ≤ 0 or reject.
+    #[test]
+    fn paste_g3_noise_lift_rejected_or_negative() {
+        let mut xr: u64 = 0x243F6A8885A308D3;
+        let x: Vec<i16> = (0..4096usize)
+            .map(|_| {
+                xr ^= xr << 13;
+                xr ^= xr >> 7;
+                xr ^= xr << 17;
+                (xr & 0xFFFF) as u16 as i16
+            })
+            .collect();
+        if let Some(t) = lift_transform(&x) {
+            let d = delta_l(&x, &t);
+            eprintln!("paste-G3 noise lift ΔL={d}");
+            assert!(d <= 0, "noise lift must not win: ΔL={d}");
+        } else {
+            eprintln!("paste-G3 noise lift rejected (values spill i16)");
         }
     }
 }
