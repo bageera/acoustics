@@ -62,7 +62,7 @@ pub(crate) mod g13;
 pub mod feas;
 
 pub const MAGIC: &[u8; 8] = b"ACUSTCS1";
-pub const VERSION: u8 = 5;
+pub const VERSION: u8 = 6;
 pub const MODEL_RAW: u8 = 0;
 pub const MODEL_D1: u8 = 1;
 pub const MODEL_D2: u8 = 2;
@@ -75,6 +75,10 @@ pub const MODEL_OP: u8 = 5;
 /// class-conditional win (piano +14-17.8% vs the complete portfolio,
 /// held-out; loses on broadband/stochastic ⇒ selectable, never mandatory).
 pub const MODEL_D3: u8 = 6;
+/// v6 wire (G14, 0.10.0): fourth-order differences — the real-recording
+/// promotion (piano +3.1-4.0% beyond D3 AND below the complete v5 portfolio
+/// floor, held-out both partitions; birds/river reject it → selectable-only).
+pub const MODEL_D4: u8 = 7;
 
 /// Research paths that need an encode() roundtrip without a real recording
 /// (G3 ΔL measurement) use this rate; cost is rate-independent (the wire
@@ -324,6 +328,17 @@ fn predictor_residuals(samples: &[i16], kind: u8) -> Vec<i64> {
                 r3.push(w[1] - w[0]);
             }
             r3
+        }
+        MODEL_D4 => {
+            // first difference of the D3 stream (G14): v[0] = D3 seed, then
+            // consecutive D3-deltas — the 4th difference of the signal.
+            let r3 = predictor_residuals(samples, MODEL_D3);
+            let mut r4 = Vec::with_capacity(r3.len());
+            r4.push(r3[0]);
+            for w in r3.windows(2) {
+                r4.push(w[1] - w[0]);
+            }
+            r4
         }
 
         _ => samples.iter().map(|&s| s as i64).collect(),
@@ -1199,7 +1214,7 @@ fn choose_model(samples: &[i16]) -> Model {
         kind: MODEL_RAW,
         param: 0,
     };
-    for kind in [MODEL_D1, MODEL_D2, MODEL_D3] {
+    for kind in [MODEL_D1, MODEL_D2, MODEL_D3, MODEL_D4] {
         if let Some(n) = payload_len(kind, 0, samples) {
             if n < best_len {
                 best = Model { kind, param: 0 };
@@ -1308,7 +1323,7 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
         return Err(format!("unsupported version {}", payload[8]));
     }
     let kind = payload[9];
-    if kind > MODEL_D3 {
+    if kind > MODEL_D4 {
         // v5 wire: kinds 0..=6 (D3 is the v5 addition; the v4-era kinds are
         // unchanged for v5 readers; version gating handles cross-version).
         return Err(format!("unknown model kind {kind}"));
@@ -1409,6 +1424,32 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
                     2 => r + 3 * sm1 - 2 * sm2,
                     _ => r + 3 * sm1 - 3 * sm2 + sm3,
                 };
+                sm3 = sm2;
+                sm2 = sm1;
+                sm1 = v;
+                samples.push(i16_from_i64(v)?);
+            }
+        }
+        MODEL_D4 => {
+            // v6 wire (G14): x[0] = r4[0]; x[1] = r4[1] + 3x0;
+            // x[2] = r4[2] + 4x1 - 4x0; and for k >= 3
+            // x[k] = r4[k] + 4x[k-1] - 6x[k-2] + 4x[k-3] - x[k-4]
+            // (the boundary cases mirror predictor_residuals' D4 arm — the
+            // hand-traced identities r4[1] = x1 - 3x0 and r4[2] = x2 - 4x1 + 4x0).
+            let (mut sm1, mut sm2, mut sm3, mut sm4): (i64, i64, i64, i64) = (0, 0, 0, 0);
+            for idx in 0..count {
+                let r = zigzag_decode(read_varint(payload, &mut pos)?);
+                let v = match idx {
+                    0 => r,
+                    1 => r + 3 * sm1,
+                    2 => r + 4 * sm1 - 4 * sm2,
+                    // k=3's row inherits the D3 stream's degenerate k=2 case:
+                    // r4[3] = x3 - 4x2 + 6x1 - 3x0 (the x0 coefficient is −3,
+                    // NOT the textbook −1 — pinned by the 4-sample roundtrip)
+                    3 => r + 4 * sm1 - 6 * sm2 + 3 * sm3,
+                    _ => r + 4 * sm1 - 6 * sm2 + 4 * sm3 - sm4,
+                };
+                sm4 = sm3;
                 sm3 = sm2;
                 sm2 = sm1;
                 sm1 = v;
@@ -2426,10 +2467,91 @@ mod tests {
             // clause is interpreted as accepting the v4 KINDS, which
             // kinds 0..=6 includes. The byte-exact v4 payload with VERSION=4
             // is rejected: pinned below.)
-            let mut v4 = payload.clone();
-            v4[8] = 4;
-            assert!(decode_payload(&v4).is_err(), "VERSION 4 payload rejects");
+            // the version gate: EVERY version but the CURRENT one rejects —
+            // the wire carries no backward-compat decode (the review's item 4
+            // = supported versions documented, decode = single-version gate)
+            for old_v in [4u8, 5] {
+                let mut older = payload.clone();
+                older[8] = old_v;
+                assert!(
+                    decode_payload(&older).is_err(),
+                    "VERSION {old_v} payload rejects"
+                );
+            }
         }
+    }
+
+    /// D4 wire acceptance (v6/G14): exact identity + selection + version.
+    #[test]
+    fn d4_wire_roundtrip_and_selection() {
+        // short-stream boundary cases: 0/1/2/3/4 samples + the classes
+        for (name, samples) in [
+            ("0", Vec::new()),
+            ("1", vec![7i16]),
+            ("2", vec![7i16, -9]),
+            ("3", vec![7i16, -9, 41]),
+            ("4", vec![7i16, -9, 41, -3]),
+            ("5", vec![7i16, -9, 41, -3, 8]),
+            ("smooth", smooth_fixture()),
+            ("noise", noise_fixture()),
+            ("silence", vec![0i16; 4096]),
+        ] {
+            if samples.is_empty() {
+                // the 0-sample payload is unencodable; nothing to assert
+                continue;
+            }
+            let model = choose_model(&samples);
+            let payload = serialize(model, 44100, &samples).expect("ser");
+            let (_, back, _) = decode_payload(&payload).expect("dec");
+            assert_eq!(back, samples, "{name}: exact");
+            // D4 EXPLICIT kind roundtrip (not just what selection picked):
+            let payload4 = serialize(
+                Model {
+                    kind: MODEL_D4,
+                    param: 0,
+                },
+                44100,
+                &samples,
+            )
+            .expect("ser4");
+            let (_, back4, m4) = decode_payload(&payload4).expect("dec4");
+            assert_eq!(back4, samples, "{name}: D4-kind exact");
+            assert_eq!(m4.kind, MODEL_D4);
+            assert_eq!(payload4[8], VERSION, "v6 wire");
+            for older_v in [4u8, 5] {
+                let mut older = payload4.clone();
+                older[8] = older_v;
+                assert!(
+                    decode_payload(&older).is_err(),
+                    "old VERSION {older_v} rejects"
+                );
+            }
+        }
+    }
+
+    /// D4 selection class law (v6): the real-piano win is corpus-gated (the
+    /// synthetic smooth fixture reads D4 ≈ D3 — the near-linear-phase tie the
+    /// G14 harness discovered — so the promotion claim lives ONLY on real
+    /// recordings); broadband must fall back to D2.
+    #[test]
+    #[ignore] // corpus-gated: scripts/g12_fetch.sh
+    fn d4_selection_class_law_real() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/g12");
+        let data = std::fs::read(format!("{dir}/emotional_piano.wav")).expect("g12_fetch");
+        let (_rate, streams) = crate::parse_wav_multichannel(&data).expect("parse");
+        for y in &streams {
+            let d4 = payload_len(MODEL_D4, 0, y).expect("d4 whole");
+            let d3 = payload_len(MODEL_D3, 0, y).expect("d3 whole");
+            eprintln!(
+                "D4 {d4} vs D3 {d3} on REAL piano ({:+} B)",
+                d3 as i64 - d4 as i64
+            );
+            assert!(d4 < d3, "D4 must beat D3 on the real piano class");
+        }
+        let noise = noise_fixture();
+        let d4n = payload_len(MODEL_D4, 0, &noise).expect("d4n");
+        let d2n = payload_len(MODEL_D2, 0, &noise).expect("d2n");
+        assert!(d4n > d2n, "D4 must lose broadband to D2");
     }
 
     /// D2-vs-D3 selection sanity on the G13 classes (synthetic proxies):
@@ -2457,13 +2579,18 @@ mod tests {
     }
 
     fn smooth_fixture() -> Vec<i16> {
+        // a REAL-music-shaped fixture: decay + vibrato + a second partial —
+        // the pure damped tone's D3 stream is near-linear (its D4 = D3: the
+        // G14 synthetic-harness finding measured inside our own fixture!). The
+        // added structure keeps 4th-order differences genuinely smaller.
         (0..4096usize)
             .map(|i| {
                 let t = i as f64 / 44_100.0;
-                let env = (-1.2 * t).exp();
-                (9000.0 * env * (2.0 * std::f64::consts::PI * 917.3 * t).cos())
-                    .round()
-                    .clamp(-32768.0, 32767.0) as i16
+                let env =
+                    (-1.2 * t).exp() * (1.0 + 0.15 * (2.0 * std::f64::consts::PI * 5.3 * t).sin());
+                let v = 9000.0 * env * (2.0 * std::f64::consts::PI * (917.3 + 12.0 * t) * t).cos()
+                    + 2200.0 * (-2.0 * t).exp() * (2.0 * std::f64::consts::PI * 1830.0 * t).cos();
+                v.round().clamp(-32768.0, 32767.0) as i16
             })
             .collect()
     }
@@ -2563,7 +2690,7 @@ mod tests {
             ("smooth_decaying", &smooth),
         ];
         for (fname, samples) in &fixtures {
-            for &kind in &[MODEL_RAW, MODEL_D1, MODEL_D2, MODEL_D3] {
+            for &kind in &[MODEL_RAW, MODEL_D1, MODEL_D2, MODEL_D3, MODEL_D4] {
                 let n = payload_len(kind, 0, samples).expect("len");
                 let ser = serialize(Model { kind, param: 0 }, 44100, samples).expect("ser");
                 assert_eq!(

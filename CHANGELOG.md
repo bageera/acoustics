@@ -41,6 +41,21 @@ Format based on Keep a Changelog; versioning is SemVer.
   model's own residual. Decision: a context coder on the correction stream is
   JUSTIFIED as the next wire milestone (payload VERSION 5); no new generative
   family first. science.md §8.7.
+## [0.10.0] — 2026-10-29
+
+### Added
+
+- **MODEL_D4 = 7 — payload VERSION 6** (G14, `src/g13.rs` + wire): fourth-order
+  differences, promoted ALONE (no ladder abstraction) per the authorization.
+  The real-recording gate: D4 beats the ENTIRE v5 portfolio on the real piano
+  (+3.1-4.0% beyond D3; whole-file wire rows 753,157 → 726,229 B = +26,928 B /
+  +3.6% ch0, 758,067 → 735,190 = +3.1% ch1, exact); birds/river reject (their
+  own steps hold); broadband noise falls back to D2; speech Δ=0 (D1 stays).
+  Decoder boundaries hand-traced + pinned: the k=3 row inherits the D3 stream's
+  degenerate k=2 case (r4[3] = x3 − 4x2 + 6x1 − **3x0**, the −3 NOT the
+  textbook −1 — the 4-sample roundtrip pins it); k ≥ 4 uniform 4th-order.
+  v6 decoders reject VERSION ≠ 6 (4/5 pinned); all v5 kinds unchanged.
+
 ## [0.9.0] — 2026-10-29
 
 > Published to crates.io; verified by registry read-back + a fresh

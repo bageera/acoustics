@@ -1011,6 +1011,15 @@ D4 promotion (the review's own gate applies): D4 beats the COMPLETE v5
 portfolio ONLY on piano-class streams (+3.1-4.0% of those payloads; corpus-
 wide well under 1%). Mechanism + evidence recorded; the kind-7/v6 wire bump
 = the USER's call, same as D3's was (five-stage gate costs apply).
+**PROMOTED (0.10.0, wire VERSION 6, kind 7 — D4 alone, no ladder abstraction
+per the authorization)**: v6's real-piano whole-file wire rows: D4-selected
+726,229 B (ch0) / 735,190 B (ch1) vs the v5/D3 wire's 753,157/758,067 —
++26,928/+22,877 B (3.1-3.6%), exact reconstruction; the k=3 boundary row
+(r4[3] = x3 − 4x2 + 6x1 − 3x0, the −3 inherited from the D3 stream's
+degenerate k=2 case) hand-traced and pinned by the 4-sample roundtrip; the
+synthetic smooth fixture measures D4 ≈ D3 (+2 B, the near-linear-phase tie)
+→ the promotion claim lives ONLY on real recordings (the class-law test is
+corpus-gated: d4_selection_class_law_real). G10/entropy-coders NOT bundled.
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection
