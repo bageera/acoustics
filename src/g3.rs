@@ -5,7 +5,9 @@
 //! model-selection benefit by measuring, for a fully specified reversible
 //! transform T with all parameters/corrections/framing charged:
 //!
-//!     ΔL_T = L_best(x) − [ L(T) + L_best(T⁻¹(x)) ]
+//! ```text
+//! ΔL_T = L_best(x) - [ L(T) + L_best(T^-1(x)) ]
+//! ```
 //!
 //! Positive ΔL = the representation change itself makes the signal cheaper;
 //! zero/negative = any apparent gain was a selection artifact (a flat model

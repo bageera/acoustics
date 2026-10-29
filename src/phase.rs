@@ -445,8 +445,11 @@ pub(crate) fn phase_forward_interpolated(
     out
 }
 
-#[cfg(test)]
-fn ls_seeds(x: &[i16]) -> Option<(f64, f64, f64)> {
+/// Crossing-LS fit (the G3-B discovery instrument, promoted for G4): the
+/// quadratic LS over zero-crossing half-cycle counts yields (φ0, ω0, α) in
+/// radians — a MEASUREMENT of the fixture's own trajectory. Floats live only
+/// in the fit; the decoder's wrap arithmetic stays pure integer.
+pub(crate) fn crossings_ls(x: &[i16]) -> Option<(f64, f64, f64)> {
     // same crossing-LS as discover (radians here), returns RAW LS floats
     // re-rounded at Q1's own ACC48 scale for the ablation arms
     let x64: Vec<i64> = x.iter().map(|&s| s as i64).collect();
@@ -494,6 +497,11 @@ fn ls_seeds(x: &[i16]) -> Option<(f64, f64, f64)> {
         + b1 * (m12 * m23 - m22 * m13))
         / det;
     Some((u0, u1, u2))
+}
+
+#[cfg(test)]
+fn ls_seeds(x: &[i16]) -> Option<(f64, f64, f64)> {
+    crossings_ls(x)
 }
 
 #[cfg(test)]

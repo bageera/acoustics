@@ -3,6 +3,19 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
+### Measured (research only)
+
+- **G4 additive modal models — DENIED, cascade mechanism named**
+  (`src/modal.rs`, research-only): greedy line-scan seeding (G4-A) + varpro
+  LS amplitudes + joint coordinate-descent refine (G4-B) with billed==wire
+  and exact decode on every row. Modal loses 2-4× on every fixture (single
+  tone 11,036 vs 2,839; two tones 8,974 vs 6,052; damped pair 12,818 vs
+  2,670; noise rejection pinned 12,320 ≥ 8,209). Mechanism (measured): the
+  per-sample LUT-quantization floor; the f3 cascade dodges it by integer
+  recurrence decomposition with cell-level residual. Two unit-conversion
+  bugs caught by the billing instruments en route (missing /(2π) in the
+  scan's accumulator conversion; a spurious +π/2 on the scanned phase).
+  science.md §8.6.
 ## [Unreleased]
 
 ### Measured (research only)

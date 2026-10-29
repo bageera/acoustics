@@ -439,6 +439,55 @@ underlying phase-law representation is not proven intrinsically inefficient"
 is answered in the model-favor direction by G3-B.1's finding that precision
 is NOT the binding constraint — residual sparsity is.
 
+### 8.6 G4 — additive modal models: the cascade's mechanism named (v0.8-dev)
+
+G4's central question: does a jointly fitted small set of oscillatory
+components beat the greedy cascade? Built (`src/modal.rs`, research-only):
+
+- **G4-A greedy seed** = a spectral line scan (cos/sin correlation over a
+  coarse 8 Hz grid → strongest line's (ω, φ), amplitude by 1-column varpro,
+  then the next scan on the residual) — the greedy arm already in the
+  f3 cascade, made explicit.
+- **G4-B joint refine** = coordinate descent on each component's (φ, ω, A)
+  against the summed reconstruction's COMPLETE billed cost, seeded by
+  varpro LS amplitudes (K ≤ 2 closed-form).
+- Two bugs the instruments caught en route: the accumulator-units
+  conversion missed the /(2π) (a DC-ish 6.28×-overscaled "component" fit
+  nothing — caught because the phase-advance arithmetic gives f =
+  ω·fs/2^48/(2π), and the correlation magnitude collapsed ⇒ max|r| stayed
+  ≈ the whole signal); and the scanned phase needed NO +π/2 (the
+  correlation basis is (cos, sin) so atan2 IS the cos phase — caught by
+  amp = 6.59 with comps never building).
+
+Complete-cost table (billed == wire, exact decode, every fixture):
+
+| Row | Fixture (independent) | modal best | portfolio | portfolio's arm |
+| --- | --------------------- | ---------- | --------- | ---------------- |
+| G4-1 | single 917.3 Hz tone | 11,036 | **2,839** | OSC (var 8) |
+| G4-2 | two tones (917/1361) | 8,974 (K=3) | **6,052** | OSC (var 8) |
+| G4-4 | two damped oscillators | 12,818 | **2,670** | OSC (var 8) |
+| G4-6 | independent mixture (square + tone) | 11,350 | **7,584** | OSC closed-loop (var 2) |
+| G4-7 | noise | 12,320 | **8,209** | RAW literal — rejection PINNED |
+| G4-8 | saturated mixture | (exact) | | exactness enforced |
+| B2 regression | linear sweep | 8,974 | **4,520** | OSC var 8 |
+
+**Measured verdict — the additive arm DENIED, with the cascade's mechanism
+NAMED**: the modal model's loss is the LUT-quantization floor (±1-2 ulp per
+sample per component — the G3-B.1 ceiling reappears), which the f3 cascade
+dodges by DECOMPOSING the signal into integer recurrences whose residual is
+one rounding cell per position. The review's decisive inequality
+(L_joint < min(greedy, cascade, portfolio)) never fires on any fixture;
+the K-sweep shows diminishing returns (k=3 ≈ k=4) and even varpro's exact
+amplitudes cannot close a 2-4× gap. The review's own counter-hypothesis
+stands measured: **the cascade's advantage comes from its computational
+structure (integer recurrences, per-stage exactness), not from
+approximating several oscillatory components.**
+
+The G2/G3-B.1/GB1 law, now measured three ways: the portfolio wins when
+its representation reproduces the signal with cell-level error; every
+LUT-per-sample family carries a quantization cost per sample that
+compounding stages avoid.
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection
