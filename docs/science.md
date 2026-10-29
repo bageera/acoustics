@@ -625,6 +625,47 @@ positives: the state/residual correlation is real (G5-D) but no causal
 probability exploit at or above the shipped coder's floor exists on tested
 routes. Research redirected per the review: new acoustic structure, or a
 broader recording corpus, not coder refinement.
+### 8.11 G6 — four-dimensional acoustic dynamics (DENIED; event-compaction already latent in the portfolio)
+
+The review's 4D experiment (`src/g6.rs`, research-only): mono PCM re-imagined
+as observations of a small evolving integer state (q, v, e, d). Arms billed at
+complete cost with IDENTICAL corrections coding (the shipped zero-run RLE +
+zigzag): osc2 (the standing 2-state family), str4 (structured two-integrator
++ decay: v' = v − qκ − vρ, q' = q + v, Q15 fixed point, per-strike state
+resets), gen4 (generic 4×4 linear state — the skeptic).
+
+| Fixture (4,096 samples) | shipped portfolio | osc2 stage0 | str4 4D | gen4 |
+| ----------------------- | ----------------- | ----------- | ------- | ---- |
+| 4D-1 struck damped sine | **541 B** | 4,625 B | 11,253 B | 12,840 B |
+| 4D-2 three identical strikes | **571 B** | 3,748 B | 10,244 B | — |
+| 4D-3 coupled resonators (exact integer state) | **8,209 B** | 8,578 B | (corrections dense) | — |
+| 4D-4 real speech (can_you_stop ch0) | **113,946 B** | 112,326 B | — | — |
+| 4D-5 white noise | 8,209 B | — | 11,740 B | — |
+| 4D-6 saturated (a0 = 3×full-scale) | exact ✓ | | | |
+
+Findings:
+1. **4D-2's event-compaction is ALREADY in the shipped portfolio** — one strike
+   541 B vs three identical strikes 571 B: +30 B for two extra events. The
+   standing families' periodic/loop structures carry repeated-event structure
+   more cheaply than a 4-state model with resets.
+2. The structured 4D arm loses 18-21× to shipped on its own target classes:
+   the struck-resonator generator class IS inside the shipped oscillatory
+   family's closure (the damped sine is exactly a 2-state Q15 recurrence with
+   a decay term), so the extra (e, d) dimensions bill parameter bytes and
+   dense corrections without new modeling power.
+3. The generic 4×4 skeptic arm loses even harder (12,840 B; its 12 free
+   entries buy no fit that the family search doesn't find cheaper) — the
+   review's skeptical prediction ("may simply reproduce AR(4)") measured TRUE,
+   with the additional wrinkle that the SHIPPED 2-state family is already the
+   better AR(4)-class fit at lower parameter cost.
+4. Noise REJECTED (4D-5 ✓): MDL picks the cheaper model; saturation exactness
+   holds (4D-6 ✓).
+
+**Verdict**: the four-dimensional DYNAMICAL hypothesis is DENIED for mono PCM
+under the complete-cost metric. The 4D branch's real value (spacetime
+acoustics, Green's functions, source-receiver geometry) requires spatial
+measurements mono cannot provide — reserved for the spatial-audio future as
+the review itself framed it.
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

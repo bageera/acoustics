@@ -94,6 +94,16 @@ Format based on Keep a Changelog; versioning is SemVer.
   The review's boundary rule fires: close v5 residual-context; redirect to new
   acoustic structure / broader corpus. science.md 8.10.
 
+### Measured (research only)
+
+- **G6 four-dimensional acoustic dynamics DENIED** (`src/g6.rs`): mono PCM as
+  observations of a (q, v, e, d) integer state-space. The structured 4D arm
+  loses 18-21x to the shipped portfolio on its own target classes (struck,
+  repeated-strike); the event-compaction hypothesis is ALREADY carried by the
+  standing periodic families (1 strike 541 B vs 3 identical strikes 571 B);
+  the generic 4x4 skeptic arm confirms the review's prediction. Noise rejected,
+  saturation exact. Spacetime/Clifford branch reserved for spatial audio.
+
 ## [Unreleased]
 
 ### Measured (research only)

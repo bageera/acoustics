@@ -28,6 +28,9 @@ pub mod g5f;
 /// v5-S research (state-conditioned residual coding) — never on the v4 wire.
 pub mod context;
 
+/// G6 research (four-dimensional acoustic dynamics) — never on the v4 wire.
+pub mod g6;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;
