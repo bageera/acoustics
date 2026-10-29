@@ -7,6 +7,25 @@ Format based on Keep a Changelog; versioning is SemVer.
 
 ### Added
 
+- **G3 — representation-space discovery** (`src/g3.rs`; research-only,
+  v0.7/G2 untouched): the charged ΔL measurement
+  `ΔL_T = L_best(x) − [L(T) + L_best(T⁻¹(x))]` over fully specified
+  reversible transforms — echo (G2's transform, gain × delay swept 1..64),
+  identity (the exact-zero control), and diff (the structurally-zero
+  negative control, measured and kept honest).
+  - Identity control measures exactly 0 (accounting verified end-to-end).
+  - On the INDEPENDENT float-generated damped tone, the swept echo space
+    reaches ΔL = +389 B (gain full, D=64) — cross-validates G2-C's 385-B
+    portfolio gap as genuine transformation benefit, not selection luck.
+  - On noise every transform is ΔL < 0 (−1,491…−5,326 B): the representation
+    space is MDL-rejected wholesale, matching G2-E.
+  - Discovery fn (swept max ΔL) added for the G3-C transfer question.
+  - Findings in docs/science.md §8.3.
+
+## [Unreleased]
+
+### Added
+
 - **G2 — compositional echo**, the review's controlled single-inner-model
   experiment (`src/nested.rs`; research-only container, no wire-format
   exposure, v0.7 behavior unchanged):

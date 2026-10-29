@@ -15,6 +15,8 @@ use masks_rle::{mask_rle_wire_len, read_mask_rle, write_mask_rle};
 
 pub mod nested;
 
+pub mod g3;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;
@@ -29,6 +31,11 @@ pub const MODEL_OSC: u8 = 4;
 /// v0.7 pre-dimensionality battery: simple discrete operations with explicit
 /// decode-exact inverses, tested BEFORE any dimensionality increase.
 pub const MODEL_OP: u8 = 5;
+
+/// Research paths that need an encode() roundtrip without a real recording
+/// (G3 ΔL measurement) use this rate; cost is rate-independent (the wire
+/// carries rate as 4 B regardless of value).
+pub(crate) const DEFAULT_RATE_FOR_RESEARCH: u32 = 44100;
 
 const VARINT_MAX_BYTES: usize = 10;
 

@@ -329,6 +329,40 @@ hypothesis survives its first experiment: composition shortened the complete
 description on every structured fixture, largest exactly where the inner y
 obeys a rule the flat arm cannot see.
 
+### 8.3 G3 — charged ΔL over the representation space (v0.8-dev)
+
+G2's question "does composition help?" is only half answered: a win can come
+from the transformation or from a cheaper sweep. G3 measures the separation
+with the charged metric — every transform parameter, correction, mask and
+framing byte counted, both sides through the same measured cost machinery:
+
+\[ \Delta L_T = L_{\mathrm{best}}(x) - \left[ L(T) + L_{\mathrm{best}}(T^{-1}(x)) \right] \]
+
+Implementation (`src/g3.rs`, research-only): T ∈ {identity, diff, echo};
+echo = the G2 transform exactly (gain id + swept delay 1..64, causal
+inverse, forward corrections charged like the v0.7 flat arm — RLE masks +
+zigzag deltas). "L_best" = the standing portfolio's measured-smallest
+complete payload (`encode()`), so a transform can only win by exposing
+structure no flat model sees. Results:
+
+| Measurement                     | ΔL (B)      | Meaning |
+| ------------------------------- | ----------- | ------- |
+| identity control                | **0** exactly | accounting verified end-to-end |
+| diff (D1) on two-part tones     | structurally ≤ 0 | the portfolio already contains this transform — a "won" ΔL here would have been a selection artifact |
+| echo, independent damped tone (swept) | **+389** (full gain, D=64) | genuine transformation benefit, larger than any fixed-pair estimate |
+| echo on noise (8 pairs swept)   | −1,491 … −5,326 | representation space rejected wholesale on structureless input |
+
+Cross-validation: G3-A's swept +389 B vs G2-C's independently measured
+385-B portfolio gap (195 vs 580) — two different measurements, one effect.
+The transformation benefit on that fixture is real, quantified, and bigger
+than the G2 report's fixed-pair reading (10 B) suggested; parameter sweep
+is part of the value, and it is charged in ΔL.
+
+Standing honest negatives: noise rejects every transform; the identity
+control's exact 0 guards the accounting (any future transform whose ΔL
+computes nonzero under identity has a billing bug, and the invariant will
+name it).
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection
