@@ -25,6 +25,9 @@ pub mod g5;
 
 pub mod g5f;
 
+/// v5-S research (state-conditioned residual coding) — never on the v4 wire.
+pub mod context;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;

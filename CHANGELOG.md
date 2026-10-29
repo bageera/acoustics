@@ -73,6 +73,17 @@ Format based on Keep a Changelog; versioning is SemVer.
   to STATE-conditioned residual modeling, gated on measured ΔL vs the shipped
   coder through the release gate. `parse_wav_multichannel` added (per-channel;
   no resampling/mixdown). science.md §8.8.
+### Measured (research only)
+
+- **v5-S state-conditioned residual coding DENIED in histogram form** (`src/context.rs`):
+  residual values unchanged, probabilities bucketed on the decoder's causal state
+  (synthetic-frozen thresholds; S6 randomized control behaving). More buckets are
+  monotonically worse on the synthetic fixture (estimation tax); on the locked real
+  corpus the shipped coder beats every histogram form (53,182 vs 61,543 B; 95,573 vs
+  166,597 B; 430,712 vs 490,074 B) — the mask ALREADY carries zero/nonzero for free.
+  Unexplored remainder recorded: an adaptive range coder (no per-bucket table
+  transport). v5 still NOT justified; wire untouched. science.md 8.9.
+
 ## [Unreleased]
 
 ### Measured (research only)

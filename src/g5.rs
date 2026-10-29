@@ -261,6 +261,96 @@ pub fn analyze_f3(samples: &[i16], k_targets: &[usize]) -> Vec<StageAnatomy> {
     out
 }
 
+/// Position-level stage-0 anatomy for the v5-S context research: per-position
+/// (residual r where coded, |y[n-1]| decoder-reconstructed state magnitude).
+/// Same LS seed + neighborhood + closed-loop replay as analyze_f3's k=1 pass.
+/// Coded positions emit r; every position emits |y[n-1]| (decoder-known) —
+/// pairs align by construction when the caller zips r with the coded subset's
+/// positions; the caller re-derives coded positions from the returned masks.
+pub fn anatomy_positions(samples: &[i16], k: usize) -> Option<(Vec<i64>, Vec<i64>)> {
+    let x: Vec<i64> = samples.iter().map(|&s| s as i64).collect();
+    let mut levels: Vec<Vec<i64>> = vec![x.clone()];
+    let mut pairs: Option<(Vec<i64>, Vec<i64>)> = None;
+    for si in 0..k {
+        let level = levels.last().expect("levels seeded").clone();
+        let Some((c, rr)) = osc_ls_fit_x(&level) else {
+            break;
+        };
+        let cands = osc_coeff_candidates(c, rr, 0);
+        type StageBest = (i64, i64, Vec<u32>, Vec<i64>, u128);
+        let mut stage_best: Option<StageBest> = None;
+        for &(cwq, r2q) in &cands {
+            let Some((m, d)) = closed_plan(&level, cwq, r2q, OSC_Q15) else {
+                continue;
+            };
+            let energy: u128 = d.iter().map(|&e| (e * e) as u128).sum();
+            if stage_best
+                .as_ref()
+                .is_none_or(|(_, _, _, _, e)| energy < *e)
+            {
+                stage_best = Some((cwq, r2q, m, d, energy));
+            }
+        }
+        let Some((cwq, r2q, m, d, _)) = stage_best else {
+            break;
+        };
+        let mut rs = Vec::new();
+        let mut mags = Vec::new();
+        let (mut p1, mut p2) = (0i64, 0i64);
+        let mut di = 0usize;
+        for i in 0..level.len() {
+            let coded = m[i / 32] & (1 << (i % 32)) != 0;
+            if coded {
+                rs.push(d[di]);
+                di += 1;
+            }
+            mags.push(p1.abs());
+            let pred = if i < 2 {
+                0
+            } else {
+                (p1 * cwq - p2 * r2q).div_euclid(OSC_Q15)
+            };
+            let v = if coded { pred + d[di - 1] } else { pred };
+            p2 = p1;
+            p1 = v;
+        }
+        if si == 0 {
+            pairs = Some((rs, mags));
+        }
+        let rec = replay_rec(&level, &m, &d, cwq, r2q);
+        let next: Vec<i64> = level.iter().zip(rec.iter()).map(|(l, r)| l - r).collect();
+        levels.push(next);
+    }
+    pairs
+}
+
+/// The replay's reconstructed stream (closed loop, exact) — anatomy_positions'
+/// multi-stage descent reuses this.
+fn replay_rec(level: &[i64], m: &[u32], d: &[i64], cwq: i64, r2q: i64) -> Vec<i64> {
+    let mut rec = Vec::with_capacity(level.len());
+    let (mut p1, mut p2) = (0i64, 0i64);
+    let mut di = 0usize;
+    for i in 0..level.len() {
+        let pred = if i < 2 {
+            0
+        } else {
+            (p1 * cwq - p2 * r2q).div_euclid(OSC_Q15)
+        };
+        let coded = m[i / 32] & (1 << (i % 32)) != 0;
+        let v = if coded {
+            let v = pred + d[di];
+            di += 1;
+            v
+        } else {
+            pred
+        };
+        rec.push(v);
+        p2 = p1;
+        p1 = v;
+    }
+    rec
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -564,6 +564,32 @@ lesson repeated in the innovations domain: a coder hypothesis earns its
 wire change only with the measured advantage — the synthetic-only win did
 not survive contact with real sound.
 
+### 8.9 v5-S — state-conditioned residual coding (DENIED in histogram form)
+
+The G5-F review's hypothesis, built as `src/context.rs` (research-only; the
+released wire untouched): residual VALUES unchanged, coding PROBABILITIES
+bucketed on the decoder's causal state |y[n-1]| (LS-seeded stage-0 replay in
+`g5::anatomy_positions`). S1 global histogram vs S2 (2 buckets) vs S3/S5
+(4 buckets); thresholds synthetic-frozen (8192/16384/24576 — held-out rule
+honored, real corpus never tuned); S6 = randomized-context negative control.
+
+Synthetic two-tone: S1 4,945 B — S2 5,309 B — S3/5 5,701 B (MORE buckets
+MONOTONICALLY WORSE: splitting a near-geometric residual alphabet across
+more per-bucket histograms pays an estimation tax exceeding the conditional
+gain; S6 control 7,664 B ≥ S3 — machinery sane).
+
+Locked real corpus (shipped vs ideal-histogram forms): shipped coder WINS
+in every cell — example_word 53,182 vs 61,543 B; can_you_stop 95,573 vs
+166,597 B; sample2 430,712 vs 490,074 B. dL_complete NEGATIVE everywhere;
+even the ONE-bucket histogram form loses to zigzag-RLE (the mask already
+carries the zero/nonzero split for free).
+
+**Verdict**: state-conditioned PROBABILITY modeling is DENIED in its
+static-histogram form. The unexplored remainder is explicitly recorded: an
+ADAPTIVE arithmetic (range) coder where P(r|c) is learned without transporting
+per-bucket histograms — a machinery-level change, not a re-histogramming.
+State information EXISTS (the G5-D 2.18x correlation, the S6 control), but no
+measured exploit through this route. v5 remains NOT justified.
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection
