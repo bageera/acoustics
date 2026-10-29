@@ -268,6 +268,9 @@ pub fn analyze_f3(samples: &[i16], k_targets: &[usize]) -> Vec<StageAnatomy> {
 /// pairs align by construction when the caller zips r with the coded subset's
 /// positions; the caller re-derives coded positions from the returned masks.
 pub fn anatomy_positions(samples: &[i16], k: usize) -> Option<(Vec<i64>, Vec<i64>)> {
+    // Returns (rs, mags) where BOTH are indexed by CODED position order:
+    // rs[j] = the j-th correction, mags[j] = |y[n_j - 1]| at that same
+    // position — the pairing the context research actually consumes.
     let x: Vec<i64> = samples.iter().map(|&s| s as i64).collect();
     let mut levels: Vec<Vec<i64>> = vec![x.clone()];
     let mut pairs: Option<(Vec<i64>, Vec<i64>)> = None;
@@ -298,26 +301,31 @@ pub fn anatomy_positions(samples: &[i16], k: usize) -> Option<(Vec<i64>, Vec<i64
         let mut mags = Vec::new();
         let (mut p1, mut p2) = (0i64, 0i64);
         let mut di = 0usize;
+        let mut rec = Vec::with_capacity(level.len());
         for i in 0..level.len() {
             let coded = m[i / 32] & (1 << (i % 32)) != 0;
-            if coded {
-                rs.push(d[di]);
-                di += 1;
-            }
-            mags.push(p1.abs());
+            let state_mag = p1.abs();
             let pred = if i < 2 {
                 0
             } else {
                 (p1 * cwq - p2 * r2q).div_euclid(OSC_Q15)
             };
-            let v = if coded { pred + d[di - 1] } else { pred };
+            let v = if coded {
+                let v = pred + d[di];
+                rs.push(d[di]);
+                mags.push(state_mag);
+                di += 1;
+                v
+            } else {
+                pred
+            };
+            rec.push(v);
             p2 = p1;
             p1 = v;
         }
         if si == 0 {
-            pairs = Some((rs, mags));
+            pairs = Some((rs.clone(), mags.clone()));
         }
-        let rec = replay_rec(&level, &m, &d, cwq, r2q);
         let next: Vec<i64> = level.iter().zip(rec.iter()).map(|(l, r)| l - r).collect();
         levels.push(next);
     }

@@ -590,6 +590,41 @@ ADAPTIVE arithmetic (range) coder where P(r|c) is learned without transporting
 per-bucket histograms — a machinery-level change, not a re-histogramming.
 State information EXISTS (the G5-D 2.18x correlation, the S6 control), but no
 measured exploit through this route. v5 remains NOT justified.
+### 8.10 G5-G — adaptive probability learning (CLOSED; the v5 residual-context investigation ends)
+
+The review's arms (`context.rs::g5g`, research-only): sequential Laplace log-
+loss on the SAME masked corrections (zero/nonzero never re-coded — the review's
+section 4 holds by construction), scale adapted by EMA over decoded history;
+A1 adaptive-global, A2 2-state, A3 4-state (thresholds unchanged),
+A5 randomized control. Gate-1 instrument only — no range coder built, because
+the margins below make an engine moot.
+
+| Stream | shipped (A0) | A1 global | A2 2-state | A3 4-state | A5 random |
+| ------ | ------------ | --------- | ---------- | ---------- | --------- |
+| synthetic | 690 B | 4,647 B | 4,657 B | 4,618 B | 4,679 B |
+| example_word | 6,426 B | 43,599 B | 43,599 B | 43,599 B | 43,789 B |
+| can_you_stop | 12,263 B | 79,387 B | 79,396 B | 79,399 B | 79,878 B |
+| sample2 | 61,164/62,370 B | 434,139/438,876 B | identical | identical | +0.5% |
+
+Findings, per the review's three gates:
+1. **Gate 1 (conditioned beats global adaptive) FAILED** — A2 = A1 within
+   0.02-0.5% (log-loss noise); the recurrence state adds NO measurable
+   conditioning value beyond what global adaptation already extracts.
+2. **Gate 2 (fewer bytes, same engine) unreachable** — the precondition
+   (Gate 1) failed; the state hypothesis has nothing to pay for a coder.
+3. **Gate 3 (beat shipped) FAILED by 6.7-7.1x** — the corrections are sparse
+   and transient: an online scale model overshoots after the first few large
+   values and pays a fixed per-symbol cost zigzag-RLE never pays. The 6.7x
+   margin is beyond any engine refinement (range coding recovers fractions,
+   not factors).
+
+The review's boundary rule fires verbatim: adaptive state-conditioned coding
+could not beat the global adaptive control NOR the shipped coder on the locked
+corpus — the v5 residual-context investigation is CLOSED. Remaining recorded
+positives: the state/residual correlation is real (G5-D) but no causal
+probability exploit at or above the shipped coder's floor exists on tested
+routes. Research redirected per the review: new acoustic structure, or a
+broader recording corpus, not coder refinement.
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

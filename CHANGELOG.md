@@ -84,6 +84,16 @@ Format based on Keep a Changelog; versioning is SemVer.
   Unexplored remainder recorded: an adaptive range coder (no per-bucket table
   transport). v5 still NOT justified; wire untouched. science.md 8.9.
 
+### Measured (research only)
+
+- **G5-G adaptive probability learning CLOSED — the v5 residual-context investigation
+  ends** (`context.rs::g5g`): sequential Laplace-EMA log-loss on the masked corrections
+  (zero/nonzero not re-coded). Conditioning adds nothing beyond global adaptation
+  (A2 = A1 within noise on all streams); every adaptive arm loses to the shipped
+  zigzag-RLE by 6.7-7.1x (sparse transient corrections break online scale models).
+  The review's boundary rule fires: close v5 residual-context; redirect to new
+  acoustic structure / broader corpus. science.md 8.10.
+
 ## [Unreleased]
 
 ### Measured (research only)

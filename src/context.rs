@@ -169,3 +169,133 @@ mod tests {
         }
     }
 }
+
+/// G5-G — adaptive-probability feasibility (research-only; wire untouched).
+///
+/// Question: can ONLINE-LEARNED probabilities beat the shipped zigzag-RLE on
+/// the nonzero corrections the mask already isolated?
+///
+/// Instrument (Gate 1, no range coder built): sequential log-loss of a
+/// Laplace model whose scale adapts from DECODED history (EMA on |r|) —
+/// encoder/decoder see identical histories, so it is causal/admissible.
+/// Arms on the SAME masked corrections (zero/nonzero NOT re-coded:
+/// A4-in-spirit holds by construction): A1 adaptive-global, A2 2-state,
+/// A3 4-state (synthetic-frozen thresholds), A5 randomized control.
+/// The decisive comparison is A2 vs A1 (the review's rule).
+#[allow(dead_code)] // instruments live for the next round
+pub(crate) fn adaptive_logloss(deltas: &[i64], states: &[usize], n_states: usize) -> f64 {
+    let mut total = 0f64;
+    let mut mean = vec![256f64; n_states];
+    let mut seen = vec![0u64; n_states];
+    for (j, &d) in deltas.iter().enumerate() {
+        let s = states[j].min(n_states - 1);
+        let ad = (d as f64).abs().max(1.0);
+        let b = mean[s];
+        total += 1.0 + std::f64::consts::LOG2_E * ad / b + (2.0 * b).log2();
+        seen[s] += 1;
+        let alpha = if seen[s] < 32 { 0.25 } else { 0.05 };
+        mean[s] += alpha * (ad - mean[s]);
+    }
+    total
+}
+
+#[cfg(test)]
+mod g5g {
+    use crate::g5::anatomy_positions as positions;
+
+    fn fixture_two_tone() -> Vec<i16> {
+        (0..4096usize)
+            .map(|i| {
+                let t = i as f64 / 44100.0;
+                let v = 8000.0 * (2.0 * std::f64::consts::PI * 917.3 * t).cos()
+                    + 5000.0 * (2.0 * std::f64::consts::PI * 1361.0 * t).cos();
+                (v.round()).clamp(-32767.0, 32767.0) as i16
+            })
+            .collect()
+    }
+
+    fn arms(r: &[i64], mags: &[i64], seed: u64) -> (f64, f64, f64, f64, f64) {
+        let shipped: usize = r
+            .iter()
+            .map(|&d| crate::varint_len(crate::zigzag_encode(d)))
+            .sum();
+        let b = |th: &[i64]| -> Vec<usize> {
+            mags.iter()
+                .map(|&m| th.iter().filter(|&&t| m >= t).count())
+                .collect()
+        };
+        let a1 = super::adaptive_logloss(r, &vec![0; r.len()], 1);
+        let a2 = super::adaptive_logloss(r, &b(&[12288]), 2);
+        let a3 = super::adaptive_logloss(r, &b(&[8192, 16384, 24576]), 4);
+        let mut xr: u64 = seed;
+        let rnd: Vec<usize> = (0..mags.len())
+            .map(|_| {
+                xr ^= xr << 13;
+                xr ^= xr >> 7;
+                xr ^= xr << 17;
+                ((xr >> 33) % 4) as usize
+            })
+            .collect();
+        let a5 = super::adaptive_logloss(r, &rnd, 4);
+        (shipped as f64, a1, a2, a3, a5)
+    }
+
+    /// Gate 1, synthetic fixture (frozen thresholds; A5 control honest).
+    #[test]
+    fn g5g_synthetic_gates() {
+        let x = fixture_two_tone();
+        let Some((r, mags)) = positions(&x, 1) else {
+            panic!("positions");
+        };
+        let (shipped, a1, a2, a3, a5) = arms(&r, &mags, 0x9E37_79B9_7F4A_7C15);
+        let e = |v: f64| format!("{:.0}", v / 8.0);
+        eprintln!(
+            "G5-G synthetic n={}: shipped={}B A1={}B A2={}B A3={}B A5={}B",
+            r.len(),
+            e(shipped),
+            e(a1),
+            e(a2),
+            e(a3),
+            e(a5)
+        );
+        assert!(
+            a5 >= a3 || (a5 - a3).abs() < 40.0,
+            "A5 randomized control must not beat A3"
+        );
+    }
+
+    /// Held-out rule + the production floor: the locked real corpus, thresholds
+    /// unchanged, arms vs shipped (Gate 3's comparison point).
+    #[test]
+    fn g5g_held_out_real_corpus() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/g5f");
+        let files = ["example_word.wav", "can_you_stop.wav", "sample2.wav"];
+        for name in files {
+            let data = std::fs::read(format!("{dir}/{name}")).expect("run g5f_fetch.sh");
+            let (_rate, streams) = crate::parse_wav_multichannel(&data).expect("parse");
+            for (ch, stream) in streams.iter().enumerate() {
+                let wins = stream.len() / 4096;
+                let (mut shipped, mut a1, mut a2, mut a3, mut a5) = (0f64, 0f64, 0f64, 0f64, 0f64);
+                for w in 0..wins {
+                    let Some((r, mags)) = positions(&stream[w * 4096..(w + 1) * 4096], 1) else {
+                        continue;
+                    };
+                    let (s, b1, b2, b3, b5) = arms(&r, &mags, 0xDEAD_BEEF_CAFE_1234 ^ w as u64);
+                    shipped += s;
+                    a1 += b1;
+                    a2 += b2;
+                    a3 += b3;
+                    a5 += b5;
+                }
+                eprintln!(
+                    "G5-G {name} ch{ch}: shipped={:.0}B A1={:.0}B A2={:.0}B A3={:.0}B A5={:.0}B (wins={wins})",
+                    shipped / 8.0,
+                    a1 / 8.0,
+                    a2 / 8.0,
+                    a3 / 8.0,
+                    a5 / 8.0
+                );
+            }
+        }
+    }
+}
