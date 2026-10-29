@@ -43,6 +43,11 @@ Format based on Keep a Changelog; versioning is SemVer.
   family first. science.md §8.7.
 ## [0.10.0] — 2026-10-29
 
+> Published to crates.io; verified by registry read-back (max 0.10.0) + a
+> fresh path-free consumer from the registry: exact decode, `MODEL_D4 = 7`
+> resolves, the full research surface callable.
+
+
 ### Added
 
 - **MODEL_D4 = 7 — payload VERSION 6** (G14, `src/g13.rs` + wire): fourth-order
