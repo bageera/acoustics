@@ -820,6 +820,53 @@ would need a payload VERSION bump + the full five-stage release gate for a
 measured ~0.5% corpus-wide saving (max measured 2.5% on PERIOD-class
 payloads). Recorded honestly both directions: real but small; the residual
 stream (91-100% of bytes) remains the materially larger program.
+### 8.16 G11-A — residual information audit (measurement-only; the gap is real but its recoverable share is closed by evidence)
+
+After G9 the audit question: are the residual bytes near their limit?
+(`src/g11.rs` + `g9::ledger_bits`, research-only; the review's three
+measurements per stream on the EXACT production symbol sequences:
+H0 empirical symbol entropy, lag-1 conditional entropy, actual wire bytes;
+G = actual − H0-coded ideal).
+
+| Stream (kind) | symbols | actual | H0-coded | Hcond-coded | G vs H0 |
+| --- | --- | --- | --- | --- | --- |
+| example_word ch0 (D1) | 38,912 | 55,693 B | 44,460 B | 27,338 B* | 11,233 B (20%) |
+| example_word ch1 (D1) | 38,912 | 55,702 B | 44,459 B | 27,333 B* | 11,243 B (20%) |
+| can_you_stop ch0 (PERIOD-2, sparse corr + mask) | 57,991 | 113,926 B | 82,455 B | 27,605 B* | 31,471 B (28%) |
+| sample2 ch0 (D1) | 412,187 | 437,318 B | 367,035 B | 354,004 B | 70,283 B (16.1%) |
+| sample2 ch1 (D1) | 412,187 | 447,515 B | 373,670 B | 359,566 B | 73,845 B (16.5%) |
+| two-tone (OSC cascade) | 4,073 | 6,027 B | 3,975 B | 1,890 B* | 2,052 B (34%) |
+(*Hcond = lag-1 pair-counting — see the bias note.)
+
+Findings, separated honestly:
+1. **The stable, mechanism-explained gap: the integral varint floor** —
+   long streams (sample2-class) sit 16-16.5% above their H0 code. The varint
+   pays whole bytes per symbol; a fractional-bit backend would keep the
+   difference. This is the ONLY gap that survives scrutiny on long streams.
+2. **The conditional-entropy promises COLLAPSE under coder evidence**:
+   example_word's Hcond says −38% and can_you_stop's says −58% — but
+   adjacency-coded variants of exactly these streams ALREADY LOST when
+   actually coded (G5-F: D1-context +3.6..+10.8%; the same files), and
+   G5-G's adaptive-context closed the last conditioning route on both
+   correction streams (A2 = A1) and vs the shipped coder (6.7-7.1x).
+   The Hcond columns carry the small-n pair-counting bias visible in
+   Hcond < H0/2 patterns at n < 60k (the review's own caveat, measured).
+3. **The two-tone cascade's 34% gap** is the integral floor on a short
+   dense stream (mean ≈7.8 b/sym, varint pays 8+); the same stream's
+   contextual promises were priced and closed in G5-G.
+4. **The recoverable-share arithmetic** the review asked for: corpus-wide,
+   G vs H0 ≈ 16% on long streams; the fraction REACHABLE by an evidenced
+   mechanism is 0% by G5-F/G5-G closure (context/conditioning LOST) plus
+   whatever an arithmetic coder could keep of the varint floor — a real
+   range-coder build gated on beating shipped by >0.5% while paying its
+   own model/tables — the exact form the review's earlier boundary
+   preserved as the "only surviving route."
+
+**Next-step verdict**: on existing speech, the audit finds no evidence for
+substantial recoverable savings beyond the (closed-by-evidence) floor; per
+the review's own rule, the corpus expansion to instruments/environmental
+recordings is the priority. Measurement-only retained; no predictor,
+transform, or entropy coder introduced.
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

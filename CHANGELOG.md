@@ -148,6 +148,19 @@ Format based on Keep a Changelog; versioning is SemVer.
   round-trips, dense/random fallback asserted. Corpus-wide ceiling ~0.5%.
   Wire-bump decision OPEN (user's call); science.md 8.15.
 
+### Measured (research only)
+
+- **G11-A residual information audit** (`src/g11.rs` + `g9::ledger_bits`,
+  measurement-only): H0/conditional/actual measured on the exact production
+  residual streams. Stable gap = the integral varint floor: 16-16.5% of
+  long-stream payloads (sample2-class) above the H0 code; a fractional-bit
+  backend is the only mechanism, gated on beating shipped >0.5% net of its
+  own tables. Conditional-entropy promises on short streams (−38%..−58%)
+  collapse under the coder evidence (G5-F adjacency tested and lost; G5-G
+  closed adaptive context) + small-n pair-counting bias (the review's caveat,
+  measured). No substantial recoverable headroom on tested speech; corpus
+  expansion = the recommended next ground. science.md 8.16.
+
 ## [Unreleased]
 
 ### Measured (research only)

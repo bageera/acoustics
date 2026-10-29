@@ -45,6 +45,10 @@ pub(crate) mod g9;
 #[cfg(test)]
 pub(crate) mod g10;
 
+/// G11 research (residual information audit) — research-only.
+#[cfg(test)]
+pub(crate) mod g11;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;

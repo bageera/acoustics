@@ -520,6 +520,61 @@ fn vlen(payload: &[u8], at: usize) -> usize {
     n
 }
 
+/// (residual bytes, mask bytes, zigzag symbols) for a chosen model's payload —
+/// the G11 audit's inputs, walked from the same production layout.
+#[cfg(test)]
+pub(crate) fn ledger_bits(
+    model: crate::Model,
+    rate: u32,
+    samples: &[i16],
+) -> (usize, usize, Vec<u64>) {
+    let (spans, payload) = ledger(model, rate, samples);
+    let mut res = 0usize;
+    let mut maskb = 0usize;
+    for s in &spans {
+        match s.category {
+            "residuals" => res += s.end - s.begin,
+            "masks" => maskb += s.end - s.begin,
+            _ => {}
+        }
+    }
+    // symbols: the delta varint stream — reuse decode-side knowledge: for the
+    // OSC kinds the symbols are the residual span's varints; lazily the
+    // caller may pass the plan deltas. For the audit we re-extract by
+    // reading the payload's residual span as varints.
+    (res, maskb, read_residual_symbols(&payload, spans, model))
+}
+
+/// Read the zigzag symbols inside the payload's residual span(s).
+#[cfg(test)]
+fn read_residual_symbols(payload: &[u8], spans: Vec<Span>, _model: crate::Model) -> Vec<u64> {
+    let mut syms = Vec::new();
+    for s in spans {
+        if s.category == "residuals" {
+            let mut p = s.begin;
+            while p < s.end {
+                let mut n = 0usize;
+                loop {
+                    let b = payload[p + n];
+                    n += 1;
+                    if b & 0x80 == 0 {
+                        break;
+                    }
+                }
+                let mut v = 0u64;
+                let mut shift = 0;
+                for &b in payload[p..p + n].iter() {
+                    v |= ((b & 0x7F) as u64) << shift;
+                    shift += 7;
+                }
+                syms.push(v);
+                p += n;
+            }
+        }
+    }
+    syms
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
