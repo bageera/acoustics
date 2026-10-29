@@ -3,6 +3,17 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
+### Measured (research only)
+
+- **G14 D4 follow-up** (src/g13.rs::g14_*): the external synthetic harness
+  D4 denial (parity/worse on 8 classes; zlib-era -19.6% = the compression
+  layer) does NOT hold on real audio - the in-repo definitive test (held-out,
+  complete-v5-portfolio comparison) shows D4 beats the ENTIRE portfolio on
+  piano by +3.1-4.0% beyond D3 (both partitions confirm); birds/river/speech
+  confirm each class' own step. Class law: differencing order rises with
+  smoothness (speech D1 / river D2 / birds D3 / piano D4), each step
+  selectable. D4 promotion (kind 7, v6 gate) = RECORDED, user's call.
+
 ## [Unreleased]
 
 ### Measured (research only)

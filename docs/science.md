@@ -972,6 +972,45 @@ realizes -17.5..-18.5%). The standing invariants (metric==serialize,
 decode(encode(x))=x) now pin the smooth-decaying fixture class — where D3 is
 a WINNER, not just a fallback — and the wire version gate is pinned in-vm test
 (VERSION-4 bytes rejected). G10 mask-RLE deliberately NOT bundled.
+### 8.19 G14 - D4 follow-up (synthetic harness DENIED; real-recording definitive test CONTRADICTS it: D4 wins piano)
+
+The independent D4 harness (externally executed, 192 reversibility checks):
+raw zigzag-varint D4-vs-D3 on eight synthetic classes = parity-to-worse
+everywhere (damped oscillator +2 B; square +258 B/order; noise +330 B/order).
+Verdict delivered: DO NOT promote D4; keep wire v5; the earlier zlib-era "-19.6%" was the
+compression layer.
+
+THE REVIEW'S "remaining definitive test" - executed in-repo (g13.rs::
+g14_d4_vs_d3_vs_portfolio): D3 vs D4 vs the COMPLETE v5 portfolio_min
+(payload_len over every kind x param) on the REAL recordings, held-out.
+
+Evaluation-only partitions (the reported numbers):
+
+| Stream | D3 | D4 | portfolio_min(v5) | D4-vs-D3 | portfolio-vs-D3 |
+| --- | --- | --- | --- | --- | --- |
+| piano ch0 | 379,565 B | 364,439 B | 380,941 B | +15,126 B (+4.0%) | +1,376 B |
+| piano ch1 | 379,556 B | 367,924 B | 380,932 B | +11,632 B (+3.1%) | +1,376 B |
+| birds ch0 | 421,291 | 432,418 | 422,690 | -11,127 B | +1,399 B (D3 wins) |
+| birds ch1 | 421,680 | 437,570 | 421,180 | -15,890 B | -500 B (portfolio wins) |
+| river ch0/ch1 | 610,839/658,496 | 670,174/707,355 | 570,335/592,269 | -59,335/-48,859 B | portfolio wins |
+
+Decision-half confirms piano (+11,518/+10,991 B) - consistent across
+partitions; birds/river consistent too (D4 loses).
+
+THE CONTRADICTION IS THE FINDING: the synthetic damped-oscillator class has
+an almost-linear D3 stream, so D4 = D3 there (its 4th difference is trivially
+the same); REAL piano vibrato/decay/hammer structure keeps 4th-order diffs
+genuinely smaller: +3.1-4.0% beyond D3 AND past the complete portfolio. The
+synthetic harness UNDERSTATED the class structure.
+
+CLASS LAW (the ladder, measured per class on real audio): differencing order
+rises with smoothness - speech D1, river/stochastic D2, birds/mixed D3,
+piano/music D4 - each step must stay SELECTABLE (every loser class measured).
+
+D4 promotion (the review's own gate applies): D4 beats the COMPLETE v5
+portfolio ONLY on piano-class streams (+3.1-4.0% of those payloads; corpus-
+wide well under 1%). Mechanism + evidence recorded; the kind-7/v6 wire bump
+= the USER's call, same as D3's was (five-stage gate costs apply).
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

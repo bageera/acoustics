@@ -53,6 +53,22 @@ fn d2_varint_cost(samples: &[i16]) -> usize {
     varint_sum(predictor_residuals(samples, MODEL_D2).iter())
 }
 
+/// The D4 symbol stream (G14 follow-up): first difference of the D3 stream —
+/// the fourth difference of the signal. Same length convention (r4[0] = r3 seed).
+fn d4_stream(samples: &[i16]) -> Vec<i64> {
+    let (r3, _) = d3_stream(samples);
+    let mut r4 = Vec::with_capacity(r3.len());
+    r4.push(r3[0]);
+    for w in r3.windows(2) {
+        r4.push(w[1] - w[0]);
+    }
+    r4
+}
+
+fn d4_varint_cost(samples: &[i16]) -> usize {
+    varint_sum(d4_stream(samples).iter())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +245,67 @@ mod tests {
             );
             assert_eq!(model.kind, crate::MODEL_D3, "piano class must select D3");
         }
+    }
+    /// G14 — the D4 follow-up's definitive test (the review's ask): D3 vs D4
+    /// on the REAL recordings under raw varint billing, plus the complete v5
+    /// portfolio comparison (every kind x param, payload_len). Held-out:
+    /// decision on windows [0, W/2), evaluation-only numbers from [W/2, W).
+    #[test]
+    #[ignore] // corpus-gated: scripts/g12_fetch.sh
+    fn g14_d4_vs_d3_vs_portfolio() {
+        type PhaseFn = fn(usize) -> std::ops::Range<usize>;
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/g12");
+        let mut rows = String::new();
+        let names = ["emotional_piano.wav", "park_birds.wav", "park_river.wav"];
+        let phases: [(&str, PhaseFn); 2] = [
+            ("eval", |wins| wins / 2..wins),
+            ("decide", |wins| 0..wins / 2),
+        ];
+        for (phase, range_of) in phases {
+            for name in names {
+                let data = std::fs::read(format!("{dir}/{name}")).expect("g12_fetch");
+                let (_rate, streams) = crate::parse_wav_multichannel(&data).expect("parse");
+                for (ch, y) in streams.iter().enumerate() {
+                    let wins = (y.len() / 4096).min(200);
+                    let (mut d3, mut d4, mut port) = (0usize, 0usize, 0usize);
+                    for w in range_of(wins) {
+                        let seg = &y[w * 4096..(w + 1) * 4096];
+                        d3 += d3_varint_cost(seg);
+                        d4 += d4_varint_cost(seg);
+                        // complete v5 portfolio: every kind x param
+                        let kinds_dense =
+                            [crate::MODEL_RAW, crate::MODEL_D1, MODEL_D2, crate::MODEL_D3];
+                        let mut best = usize::MAX;
+                        for &k in &kinds_dense {
+                            best = best.min(crate::payload_len(k, 0, seg).unwrap_or(usize::MAX));
+                        }
+                        for lag in 2..=96usize {
+                            best = best.min(
+                                crate::payload_len(crate::MODEL_PERIOD, lag, seg)
+                                    .unwrap_or(usize::MAX),
+                            );
+                        }
+                        for variant in 0..11usize {
+                            best = best.min(
+                                crate::payload_len(crate::MODEL_OSC, variant, seg)
+                                    .unwrap_or(usize::MAX),
+                            );
+                        }
+                        for op in 0..16usize {
+                            best = best.min(
+                                crate::payload_len(crate::MODEL_OP, op, seg).unwrap_or(usize::MAX),
+                            );
+                        }
+                        port += best;
+                    }
+                    rows.push_str(&format!(
+                        "G14 {phase} {name} ch{ch}: D3={d3} D4={d4} portfolio={port} | D4-vs-D3={:+} B portfolio-vs-D3={:+} B\n",
+                        d3 as i64 - d4 as i64,
+                        port as i64 - d3 as i64,
+                    ));
+                }
+            }
+        }
+        eprintln!("{rows}");
     }
 }
