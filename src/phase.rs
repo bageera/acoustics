@@ -38,14 +38,14 @@ use crate::{
     zigzag_decode, zigzag_encode,
 };
 
-pub(crate) const PHASE_BITS: u32 = 24; // exact wrap arithmetic, wider than the LUT
-pub(crate) const PHASE_ACC: i64 = 1 << PHASE_BITS;
+pub const PHASE_BITS: u32 = 24; // exact wrap arithmetic, wider than the LUT
+pub const PHASE_ACC: i64 = 1 << PHASE_BITS;
 /// LUT (12-bit angle) index = top 12 bits of the accumulator.
-pub(crate) const PHASE_SHIFT: u32 = PHASE_BITS - 12;
+pub const PHASE_SHIFT: u32 = PHASE_BITS - 12;
 
 /// Recurrence-derived output (cos only, A fixed):
 /// x̂[n] = (A · cos_lut(φ[n])) >> 15.
-pub(crate) fn phase_forward(phi0: i64, omega0: i64, alpha: i64, a: i64, n: usize) -> Vec<i64> {
+pub fn phase_forward(phi0: i64, omega0: i64, alpha: i64, a: i64, n: usize) -> Vec<i64> {
     let mut phi = phi0;
     let mut omega = omega0;
     let mut out = Vec::with_capacity(n);
@@ -327,7 +327,7 @@ fn discover_segmented(samples: &[i16]) -> Option<(Vec<u8>, usize)> {
 }
 
 /// discover's public shape: (wire, billed)
-pub(crate) fn discovered_wire(samples: &[i16]) -> Option<(Vec<u8>, usize)> {
+pub fn discovered_wire(samples: &[i16]) -> Option<(Vec<u8>, usize)> {
     let g = discover_phase_model(samples);
     let segged = discover_segmented(samples);
     // smaller complete wire wins; decode dispatches on the wire's 2nd varint
@@ -357,7 +357,7 @@ fn prepend_fmt(fmt: u8, mut wire: Vec<u8>) -> Vec<u8> {
 
 /// Decode the phase-trajectory container (headerless): exactly the inverse of
 /// serialize_candidate. Returns (rate-independent samples; params echoed).
-pub(crate) fn decode_phase(payload: &[u8]) -> Result<(Vec<i16>, i64, i64, i64, i64), String> {
+pub fn decode_phase(payload: &[u8]) -> Result<(Vec<i16>, i64, i64, i64, i64), String> {
     let mut pos = 0usize;
     let fmt = read_varint(payload, &mut pos)?;
     let n = read_varint(payload, &mut pos)? as usize;
@@ -449,7 +449,7 @@ pub(crate) fn phase_forward_interpolated(
 /// quadratic LS over zero-crossing half-cycle counts yields (φ0, ω0, α) in
 /// radians — a MEASUREMENT of the fixture's own trajectory. Floats live only
 /// in the fit; the decoder's wrap arithmetic stays pure integer.
-pub(crate) fn crossings_ls(x: &[i16]) -> Option<(f64, f64, f64)> {
+pub fn crossings_ls(x: &[i16]) -> Option<(f64, f64, f64)> {
     // same crossing-LS as discover (radians here), returns RAW LS floats
     // re-rounded at Q1's own ACC48 scale for the ablation arms
     let x64: Vec<i64> = x.iter().map(|&s| s as i64).collect();

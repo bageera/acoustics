@@ -42,13 +42,7 @@ use crate::{
 
 /// Per-component integer cos term at a 48-bit accumulator:
 /// term_k[n] = (A_k · cos(φ_k[n])) >> 15, φ' = (φ + ω) & (2^48 − 1), ω' = ω + α.
-pub(crate) fn component_term(
-    phi0: i64,
-    omega0: i64,
-    alpha: i64,
-    a: i64,
-    n: usize,
-) -> Option<Vec<i64>> {
+pub fn component_term(phi0: i64, omega0: i64, alpha: i64, a: i64, n: usize) -> Option<Vec<i64>> {
     if a == 0 {
         return None; // a zero-amplitude component is not a component
     }
@@ -67,7 +61,7 @@ pub(crate) fn component_term(
 }
 
 /// Sum of K components, rounded ONCE (i64 integer; the spec'd rounding).
-pub(crate) fn sum_components(terms: &[Vec<i64>]) -> Vec<i64> {
+pub fn sum_components(terms: &[Vec<i64>]) -> Vec<i64> {
     let n = terms.first().map_or(0, |t| t.len());
     let mut out = vec![0i64; n];
     for t in terms {
@@ -193,7 +187,7 @@ fn varpro_amplitudes(
 /// working stream against cos/sin at candidate accumulator-grid frequencies;
 /// the strongest line's (ω, φ) seeds the component. Coarse 8 Hz grid, then the
 /// integer refine picks the wire-minimum.
-pub(crate) fn strongest_line(working: &[i64], n: usize) -> Option<(i64, f64)> {
+pub fn strongest_line(working: &[i64], n: usize) -> Option<(i64, f64)> {
     let mut best: Option<(i64, f64, f64)> = None; // (omega_acc48, phi_rad, mag)
     let mut f = 20.0f64;
     while f < 20000.0 {
@@ -216,7 +210,7 @@ pub(crate) fn strongest_line(working: &[i64], n: usize) -> Option<(i64, f64)> {
 }
 
 /// G4-A seed (greedy line-scan) + G4-B joint refine (coordinate descent).
-pub(crate) fn modal_fit(samples: &[i16], k_target: usize) -> Option<ModalPlan> {
+pub fn modal_fit(samples: &[i16], k_target: usize) -> Option<ModalPlan> {
     if std::env::var("MODAL_DEBUG").is_ok() {
         eprintln!("MODAL_FIT_TOP: enters (n={} k={})", samples.len(), k_target);
     }
@@ -374,7 +368,7 @@ fn refine_joint(x64: &[i64], mut comps: Vec<(i64, i64, i64, i64)>, n: usize) -> 
 
 /// Discover: sweep K ∈ 1..=4 (+ shared-f0 arm when a harmonic relationship
 /// exists), pick measured-min; the PORTFOLIO stays the comparator.
-pub(crate) fn discover_modal(samples: &[i16]) -> Option<(ModalPlan, usize)> {
+pub fn discover_modal(samples: &[i16]) -> Option<(ModalPlan, usize)> {
     let n = samples.len();
     if n < 64 {
         return None;
@@ -394,7 +388,7 @@ pub(crate) fn discover_modal(samples: &[i16]) -> Option<(ModalPlan, usize)> {
 }
 
 /// Serialization (the G4 container): exact inverse of the decoder below.
-pub(crate) fn serialize_modal(plan: &ModalPlan, samples: &[i16]) -> Result<Vec<u8>, String> {
+pub fn serialize_modal(plan: &ModalPlan, samples: &[i16]) -> Result<Vec<u8>, String> {
     let mut out = Vec::with_capacity(plan.cost.max(64));
     write_varint(&mut out, samples.len() as u64);
     write_varint(&mut out, plan.comps.len() as u64);
@@ -420,7 +414,7 @@ pub(crate) fn serialize_modal(plan: &ModalPlan, samples: &[i16]) -> Result<Vec<u
     Ok(out)
 }
 
-pub(crate) fn decode_modal(payload: &[u8]) -> Result<(Vec<i16>, ModalPlan), String> {
+pub fn decode_modal(payload: &[u8]) -> Result<(Vec<i16>, ModalPlan), String> {
     let mut pos = 0usize;
     let n = read_varint(payload, &mut pos)? as usize;
     if n == 0 {

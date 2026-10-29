@@ -28,7 +28,7 @@ use crate::{closed_plan, deltas_bytes, osc_coeff_candidates, osc_ls_fit_x, OSC_Q
 
 /// One stage's anatomy.
 #[derive(Debug, Clone)]
-pub(crate) struct StageAnatomy {
+pub struct StageAnatomy {
     pub k: usize,
     pub cwq: i64,
     pub r2q: i64,
@@ -159,7 +159,7 @@ fn state_cond_gain(
 }
 
 /// Replay the winning f3 cascade (variant 8) capturing per-stage anatomy.
-pub(crate) fn analyze_f3(samples: &[i16], k_targets: &[usize]) -> Vec<StageAnatomy> {
+pub fn analyze_f3(samples: &[i16], k_targets: &[usize]) -> Vec<StageAnatomy> {
     let mut out = Vec::new();
     let n = samples.len();
     let x: Vec<i64> = samples.iter().map(|&s| s as i64).collect();

@@ -27,6 +27,19 @@ Format based on Keep a Changelog; versioning is SemVer.
   model's own residual. Decision: a context coder on the correction stream is
   JUSTIFIED as the next wire milestone (payload VERSION 5); no new generative
   family first. science.md §8.7.
+## [0.8.1] — 2026-10-28
+
+### Fixed
+
+- The crate's research surface was unreachable from outside: `g5::analyze_f3`,
+  `StageAnatomy` (fields), `phase::{phase_forward, crossings_ls,
+  discovered_wire, decode_phase, PHASE_*}` and
+  `modal::{modal_fit, discover_modal, serialize_modal, decode_modal,
+  ModalPlan, component_term, sum_components, strongest_line}` were
+  pub(crate) — 0.8.0 shipped them unreachable despite the changelog
+  advertising the research modules. Publicized; caught by the
+  fresh-registry consumer gate.
+
 ## [0.8.0] — 2026-10-28
 
 ### Added
