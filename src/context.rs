@@ -24,7 +24,7 @@
 //! Held-out rule: thresholds fixed from the synthetic two-tone fixture; the
 //! locked real recordings never tune them.
 
-#[allow(dead_code)] // instruments live for the next v5-S round
+#[cfg(test)]
 fn bucket_of(state_mag: i64, thresholds: &[i64]) -> usize {
     let mut b = 0usize;
     for (i, &t) in thresholds.iter().enumerate() {
@@ -38,7 +38,7 @@ fn bucket_of(state_mag: i64, thresholds: &[i64]) -> usize {
 /// Ideal bits under per-bucket histograms + the table transport byte estimate
 /// (every (value, count) histogram row billed ~4 B — the honest both-sides
 /// constant-table cost of a static context coder).
-#[allow(dead_code)] // instruments live for the next v5-S round
+#[cfg(test)]
 fn ideal_bits(per_pos: &[i64], ctx_mags: &[i64], thresholds: &[i64]) -> (f64, usize) {
     let n = per_pos.len().min(ctx_mags.len());
     let nb = thresholds.len() + 1;
@@ -182,7 +182,7 @@ mod tests {
 /// A4-in-spirit holds by construction): A1 adaptive-global, A2 2-state,
 /// A3 4-state (synthetic-frozen thresholds), A5 randomized control.
 /// The decisive comparison is A2 vs A1 (the review's rule).
-#[allow(dead_code)] // instruments live for the next round
+#[cfg(test)]
 pub(crate) fn adaptive_logloss(deltas: &[i64], states: &[usize], n_states: usize) -> f64 {
     let mut total = 0f64;
     let mut mean = vec![256f64; n_states];

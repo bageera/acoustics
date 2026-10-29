@@ -25,12 +25,11 @@
 //! arithmetic); held-out rule: the DECISION made on half the windows, the
 //! reported number from the other half.
 
-use crate::{predictor_residuals, varint_len, zigzag_encode, MODEL_D2};
+use crate::{predictor_residuals, varint_sum, MODEL_D2};
 
 /// The D3 symbol stream: full first-difference of the shipped D2 stream.
 /// r3[0] = r2[0] (the x0 seed); r3[j+1] = r2[j+1] - r2[j] — SAME LENGTH as
 /// the D2 stream (apples-to-apples varint count).
-#[cfg(test)]
 fn d3_stream(samples: &[i16]) -> (Vec<i64>, usize) {
     let r2 = predictor_residuals(samples, MODEL_D2);
     let mut r3 = Vec::with_capacity(r2.len());
@@ -45,20 +44,13 @@ fn d3_stream(samples: &[i16]) -> (Vec<i64>, usize) {
 /// r3[0] = x0, r3[1] = (x1-x0) - x0 — decode needs both) + dense varints.
 /// Mirrors the wire's D2 accounting: symbol 1 = x0, symbol 2 = x0 + r3[1] +
 /// x0... — exact inversion shown in the roundtrip test drives the seed count.
-#[cfg(test)]
 fn d3_varint_cost(samples: &[i16]) -> usize {
     let (r3, _) = d3_stream(samples);
-    varint_sum(&r3)
+    varint_sum(r3.iter())
 }
 
-#[cfg(test)]
 fn d2_varint_cost(samples: &[i16]) -> usize {
-    varint_sum(&predictor_residuals(samples, MODEL_D2))
-}
-
-#[cfg(test)]
-fn varint_sum(r: &[i64]) -> usize {
-    r.iter().map(|&v| varint_len(zigzag_encode(v))).sum()
+    varint_sum(predictor_residuals(samples, MODEL_D2).iter())
 }
 
 #[cfg(test)]

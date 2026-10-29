@@ -352,7 +352,7 @@ fn period_plan(samples: &[i16], lag: usize) -> Option<(Vec<i64>, Vec<u32>)> {
     Some((residuals, masks))
 }
 
-fn varint_sum<'a>(it: impl Iterator<Item = &'a i64>) -> usize {
+pub(crate) fn varint_sum<'a>(it: impl Iterator<Item = &'a i64>) -> usize {
     it.map(|&r| varint_len(zigzag_encode(r))).sum()
 }
 
