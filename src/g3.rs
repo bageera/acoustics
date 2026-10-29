@@ -38,7 +38,7 @@ use crate::{encode, plan_corrections_masked_op, varint_len, zigzag_encode, OP_GA
 
 /// A reversible transform of a signal into a representation tuple plus the
 /// per-position correction stream the decoder needs on top of the reconstruction.
-pub(crate) struct TransformOutcome {
+pub struct TransformOutcome {
     pub name: &'static str,
     /// transformed streams (one per "channel" the inner models may bill)
     pub streams: Vec<Vec<i16>>,
@@ -148,7 +148,7 @@ fn best_portfolio(samples: &[i16]) -> usize {
 
 /// The G3 measurement for one transform outcome: charged ΔL in bytes.
 /// ΔL = L_best(x) − [L(T) + L_best(T⁻¹(x))], all through measured costs.
-pub(crate) fn delta_l(samples: &[i16], t: &TransformOutcome) -> i64 {
+pub fn delta_l(samples: &[i16], t: &TransformOutcome) -> i64 {
     let l_best_x = best_portfolio(samples) as i64;
     let mut total = t.transform_cost as i64;
     for (idx, stream) in t.streams.iter().enumerate() {
@@ -163,7 +163,7 @@ pub(crate) fn delta_l(samples: &[i16], t: &TransformOutcome) -> i64 {
 /// Discovery: sweep ALL (gsel, D) pairs, return the best charged ΔL (and its
 /// winning pair) — positive means the representation space contains a
 /// transform that beats the best flat model, charges included.
-pub(crate) fn discover_delta_l(samples: &[i16]) -> Option<(i64, usize, usize)> {
+pub fn discover_delta_l(samples: &[i16]) -> Option<(i64, usize, usize)> {
     let mut best: Option<(i64, usize, usize)> = None;
     for gsel in 0..OP_GAINS.len() {
         for d_run in 1..=64usize {
