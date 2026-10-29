@@ -23,6 +23,8 @@ pub mod modal;
 
 pub mod g5;
 
+pub mod g5f;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;
@@ -159,6 +161,64 @@ pub fn parse_wav(data: &[u8]) -> Result<(u32, Vec<i16>), String> {
         cursor += 8 + size + (size & 1);
     }
     // ponytail: trailing chunks after data are never searched — real WAVs never need it
+    Err("missing data chunk".into())
+}
+
+/// Real-recording harness (G5-F): parse ANY 16-bit PCM WAV into per-channel
+/// streams (no resampling, no silent mixdown — stereo stays two streams).
+pub fn parse_wav_multichannel(data: &[u8]) -> Result<(u32, Vec<Vec<i16>>), String> {
+    if data.len() < 12 || &data[0..4] != b"RIFF" || &data[8..12] != b"WAVE" {
+        return Err("not a RIFF/WAVE file".into());
+    }
+    let mut cursor = 12;
+    let mut rate: Option<u32> = None;
+    let mut channels: Option<u16> = None;
+    while cursor + 8 <= data.len() {
+        let id: [u8; 4] = data[cursor..cursor + 4].try_into().unwrap();
+        let size = u32::from_le_bytes(data[cursor + 4..cursor + 8].try_into().unwrap()) as usize;
+        let body_end = (cursor + 8 + size).min(data.len());
+        let body = &data[cursor + 8..body_end];
+        if &id == b"fmt " {
+            if size < 16 {
+                return Err("truncated fmt chunk".into());
+            }
+            let format = u16::from_le_bytes(body[0..2].try_into().unwrap());
+            let ch = u16::from_le_bytes(body[2..4].try_into().unwrap());
+            let sample_rate = u32::from_le_bytes(body[4..8].try_into().unwrap());
+            let bits = u16::from_le_bytes(body[14..16].try_into().unwrap());
+            if format != 1 || bits != 16 {
+                return Err("only 16-bit PCM WAV supported".into());
+            }
+            if ch == 0 {
+                return Err("invalid channel count".into());
+            }
+            if sample_rate == 0 {
+                return Err("invalid sample rate".into());
+            }
+            channels = Some(ch);
+            rate = Some(sample_rate);
+        } else if &id == b"data" {
+            let ch = channels.ok_or("data chunk before fmt chunk")? as usize;
+            if !body.len().is_multiple_of(2 * ch) {
+                return Err("data chunk not frame-aligned".into());
+            }
+            let frames = body.len() / (2 * ch);
+            if frames == 0 {
+                return Err(ERR_EMPTY.into());
+            }
+            let rate = rate.ok_or("data chunk before fmt chunk")?;
+            let mut streams: Vec<Vec<i16>> = vec![Vec::with_capacity(frames); ch];
+            for frame in body.chunks_exact(2 * ch) {
+                for (c, slot) in streams.iter_mut().enumerate() {
+                    slot.push(i16::from_le_bytes(
+                        frame[2 * c..2 * c + 2].try_into().unwrap(),
+                    ));
+                }
+            }
+            return Ok((rate, streams));
+        }
+        cursor += 8 + size + (size & 1);
+    }
     Err("missing data chunk".into())
 }
 

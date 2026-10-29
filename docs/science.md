@@ -520,6 +520,50 @@ representation = compact dynamics + low-cost exact innovations; the
 innovations were NOT at their floor, at a 65.7% coder gap.
 
 G5-F (real audio) stays queued pending a corpus (the honest row).
+### 8.8 G5-F — real-recording validation (CC0 corpus, hash-locked)
+
+Corpus (`testdata/g5f/`, fetched + sha-256-verified by `scripts/g5f_fetch.sh`;
+no resampling; stereo channels measured separately — `parse_wav_multichannel`
+joined the LIB in this milestone for the harness):
+
+| Recording | Format | whole-file portfolio | PCM | ratio |
+| --------- | ------ | -------------------- | --- | ----- |
+| example_word.wav ch0/ch1 | stereo 44.1k | 55,710/55,719 B | 77,824 B | 71.6% |
+| can_you_stop.wav ch0 | mono 24k | 113,946 B | 165,866 B | 68.7% |
+| sample2.wav ch0/ch1 | stereo 44.1k | 437,335/447,532 B | 1,217,024 B | 35.9-36.8% |
+
+(The portfolio includes the corpus WAV header cost only at the 44-byte framing;
+percentages are against raw PCM frames. Fixed-window form also recorded in the
+test's stdout — the whole-file form wins everywhere.)
+
+**Outcome 1 — residual predictability EXTENDS to real audio, stronger**:
+the cascade's stage-0 residual Hcond/H0 ratio = 0.41/0.41/0.21/0.55/0.54
+(synthetic fixture was 0.48): half or more of the residual entropy on real
+speech is conditional structure.
+
+**Outcome 2 — the naive promotion DENIED**: the D1-context residual coder
+(the G5-E synthetic win, −18.6%) LOSES on real recordings in every row
+(+10.8% example_word, +3.6% can_you_stop, +4.7% sample2 — billed both
+sides). Mechanism: real speech's portfolio-extracted residuals carry large
+isolated deltas (phonetic transitions); differencing spreads each large
+delta across adjacent pairs, lengthening the zigzag codes. The conditional
+redundancy is real but NOT lag-1-adjacent — an extractor keyed on the
+stage's internal STATE (the G5-D 2.18× spread) is the remaining candidate,
+not delta-adjacency.
+
+**Outcome 3 — the complete portfolio on real sound**: the shipped v4 wire
+already reconstructs real recordings at 36-72% of PCM (speech class) with
+exact reconstruction — the strongest real-audio positive so far.
+
+**Wire-milestone decision**: payload VERSION 5 (residual context coder) is
+NOT justified by the lag-1 context as-is — the v5 milestone's design brief
+changes to state-conditioned residual modeling (the G5-D instrument's bucket
+structure), gated on first demonstrating positive ΔL against the shipped
+coder on the hash-locked corpus through the release gate. The G3-B/G4
+lesson repeated in the innovations domain: a coder hypothesis earns its
+wire change only with the measured advantage — the synthetic-only win did
+not survive contact with real sound.
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

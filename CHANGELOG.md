@@ -61,6 +61,18 @@ Format based on Keep a Changelog; versioning is SemVer.
 - Payload VERSION 4 (RAW literal submode, mask RLE, OP battery) — first
   published version carrying the v0.7-era wire.
 
+### Measured (research only)
+
+- **G5-F real-recording validation** (`src/g5f.rs` + `testdata/g5f/` +
+  `scripts/g5f_fetch.sh`, hash-locked CC0 corpus): complete portfolio on real
+  speech = 36-72% of PCM with exact reconstruction (strongest real-audio
+  positive). The D1-context residual coder — G5-E's synthetic −18.6% — LOSES
+  on real audio (+3.6..+10.8%, billed both sides): large isolated transition
+  deltas spread under differencing; the redundancy is conditional but NOT
+  lag-1-adjacent (Hcond/H0 = 0.21-0.55 measured). v5's design brief changes
+  to STATE-conditioned residual modeling, gated on measured ΔL vs the shipped
+  coder through the release gate. `parse_wav_multichannel` added (per-channel;
+  no resampling/mixdown). science.md §8.8.
 ## [Unreleased]
 
 ### Measured (research only)
