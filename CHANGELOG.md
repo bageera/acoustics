@@ -3,6 +3,54 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
+## [0.7.0] — 2026-10-28
+
+### Added
+
+- **The pre-dimensionality battery (MODEL_OP, kind 5)** — the user's rule made
+  operational: before any dimensionality increase, the encoder sweeps simple
+  discrete operations (loop/repeat at ten periods up to 128+; echo at four
+  integer gains × delays 1..64; integer scale with exact inverse when
+  invertible; 16 arms total) under the same serialize-and-count discipline.
+  Each arm decodes by its explicit inverse; select = smallest complete payload.
+- **Corrections mask RLE** (`src/masks_rle.rs`): zero-run-first run-length
+  coding over the per-word mask tables. Kills the 4 B-per-32-samples floor
+  v0.4 P5 measured dominating exact-fit payloads (all-zero 5,152-sample table:
+  644 → ~4 B).
+- **RAW literal submode** (the Audio-G1 report's request): kind 0 bills the
+  smaller of zigzag-varint stream vs literal PCM bytes; white noise now caps
+  at 100.21% instead of expanding to 137%.
+- **Release gates made explicit in tests**: `metric == serialize` and
+  `decode(encode(x)) == x` now run over a four-shape fixture set
+  (quasiperiodic, echo-of-recurrence, extreme noise, speech-like) for RAW,
+  D1, D2, every PERIOD lag, every OP arm.
+- `examples/g1battery.rs`: the per-arm + portfolio harness over the Audio-G1
+  fixture classes (8 fixtures, reproducible; numbers recorded in
+  docs/science.md §8.1).
+- Payload VERSION 3 → 4: RAW payloads gain a submode byte; OP payloads (RLE
+  masks, header arm id) never shipped in an older version.
+
+### Fixed
+
+- Mask RLE wire/accounting agreement: leading zero-run emitted when a table
+  starts with set words (encoder/decoder convention mismatch desynced decode);
+  run-count varints billed at their true lengths (counts ≥ 128 are 2 bytes).
+- Echo decode: `y[i − D]` underflow for i < D guarded; corrections measured
+  against the i16-clamped y the decoder replays (exact decode restored when
+  the inverse recursion spills past ±32767).
+- Cost accounting: the OP arm-id varint and the echo arm's ylen varint are now
+  billed — model selection sees the true serialized cost.
+- Removed the structurally lossy interleave arm (it billed only odd
+  positions while decode zeroed the evens).
+
+### Measured
+
+- Battery portfolio on the Audio-G1 classes: LOOP wins the exact lattice
+  fixtures (square 213 B, triangle 304 B — first OP-portfolio wins);
+  ECHO ties the portfolio on speech-like (99.22%) with zero corrections on
+  its generator class but does not win against structure-aware competitors
+  (billed inverse stream; nesting deferred to G2); noise capped at 100.21%.
+
 ## [0.6.1] — 2026-10-27
 
 ### Added

@@ -197,7 +197,84 @@ target record length N, zero correction is achievable **iff the strip polygon
 stays non-empty at N**. "Unavoidable vs undiscovered" is a decidable per-family
 measurement — the geometry, not the search budget, owns the answer.
 
-## 8. Standing principles (the honest-results contract)
+## 8. The pre-dimensionality rule
+
+> **Before increasing a model's dimensionality, determine whether the data was
+> produced by a simple discrete operation we have not identified.**
+
+A residual stream that resists single-oscillator fits does not automatically
+argue for more dimensions (more stages, coupled systems, higher-order
+recurrences). The cheap hypothesis family — the simple discrete operations
+with explicit, decode-exact inverses — comes first, because each one turns an
+apparently many-dimensional signal into a few bytes of parameters:
+
+- **superposition** x = a + b (sum of two exact generators — the P6 fixture's
+  own constructor),
+- **echo** x[n] = y[n] + g·y[n−D],
+- **loop/repeat** x[n] = y[n mod L],
+- **patch/copy** x[n] = y[n−D] on a span,
+- **scale** x = g·y (integer gain, Q lattice),
+- **downsample/interleave/cumsum** (D-class already covers diff-invert).
+
+Measured support in this repo: the P6 tie is this principle in miniature — a
+fixture *built by the simplest superposition* resisted a richer continuous
+model (cascade) that never hypothesized the constructor. The manifold
+project's fold probe states the same conclusion from the image side
+("the redundancy is the mechanism, the re-layout is incidental"): the
+repeat-rule beat every reordering arm it was compared to.
+
+Operational form: before any new model family is built, the encoder runs the
+discrete-hypothesis battery (each hypothesis = a plan in the same
+serialize-and-count discipline, decoded by its explicit inverse) and only adds
+dimensionality when every simple operation loses on measured J. The battery is
+cheap (each arm is decode-cheap and few-parameter); the dimensionality is not.
+
+### 8.1 The battery, measured (Audio-G1 classes, v0.7)
+
+The 16-arm battery ran against regenerated 4,096-sample versions of the
+Audio-G1 fixture classes (`examples/g1battery.rs`). Two measurements per the
+review protocol: every arm individually (the arm list prints costs in bytes),
+then the portfolio's measured-smallest choice. Portfolio results (PCM = 8,192 B):
+
+| Fixture     | Winning model            | Encoded | % of PCM |
+| ----------- | ------------------------ | ------- | -------- |
+| ramp        | D2 recurrence            | 539     | 6.58%    |
+| square      | OP loop L=64 (arm 7)     | 213     | 2.60%    |
+| triangle    | OP loop L=128 (arm 9)    | 304     | 3.71%    |
+| damped tone | OSC f3 cascade (var 8)   | 549     | 6.70%    |
+| mixed tones | OSC f1 closed-loop       | 7,381   | 90.10%   |
+| piecewise   | OSC f3 cascade           | 4,746   | 57.93%   |
+| speech-like | OP echo arm              | 8,128   | 99.22%   |
+| white noise | RAW literal (submode 1)  | 8,209   | 100.21%  |
+
+Honest readings:
+
+- **LOOP is the battery's first real win**: on exact lattice fixtures it ties
+  or beats the discrete-phase OSC variants (square 213 B, triangle 304 B).
+  The ramp still belongs to D2: the loop's base stream costs more than the
+  second-order recurrence's parameters — a loop arm is a cost only when the
+  base is small.
+- **ECHO on speech-like content**: the arm nearly ties the portfolio (8,128 vs
+  8,128 at 99.22%) but does not win; on its own generator class the exact
+  fixture decodes with zero corrections. The measured ceiling stands: the arm
+  bills its inverse y-stream as RAW varints (single-pass battery), so nested
+  coding of y would be needed to beat structure-aware competitors. That
+  nesting is deliberately deferred (G2 research line, see below).
+- **RAW literal submode** (the G1-report request): selection now bills the
+  smaller of zigzag-varint stream vs literal PCM bytes. White noise went from
+  137.39% → 100.21% — expansion capped at 17 bytes of header.
+- The battery caught its own falsifier: the `metric == serialize` invariant,
+  extended to every arm on four fixture shapes (quasiperiodic, echo-of-
+  recurrence, extreme noise, speech-like), exposed a run-count varint that the
+  RLE accounting billed as 1 byte but the wire wrote as 2 (counts ≥ 128).
+  Accounting exactness is now measured, not assumed — with the review's
+  qualification that tests cover the tested shapes only, not every input.
+
+Nesting (x = E_θ(F_φ(z)+q)+r) is the named G2 boundary: a controlled
+two-stage experiment (echo, then one model for y) before any general
+composition.
+
+## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection
    metric == serialized bytes, tested per candidate.

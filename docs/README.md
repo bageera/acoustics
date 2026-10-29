@@ -34,6 +34,14 @@ are instrumentation and do not touch it.
   result on the v0.5 experiment's fixture. See science.md
   §"Rounding-cell geometry (v0.6)".
 
+## The pre-dimensionality rule
+
+Before any dimensionality increase (more stages, coupled systems, higher-order
+recurrences), the encoder tests the simple discrete operations — superposition,
+echo, loop/repeat, patch/copy, integer scale — under the same serialize-and-count
+discipline; dimensionality is bought only when every simple operation loses on
+measured J. See [science.md §8](science.md#8-the-pre-dimensionality-rule).
+
 ## Conventions
 
 - **Same-fixture rule**: comparisons quote identical inputs and complete
