@@ -388,6 +388,57 @@ Recorded for the record's completeness, NOT retained. The paste's remaining
 rows (phase-trajectory discovery, coupled oscillators, source–filter) stay
 queued in priority order.
 
+### 8.5 G3-B — phase trajectories: the model discovers, the representation loses (v0.8-dev)
+
+The paste's model (φ[n+1] = φ[n] + ω[n] mod 2^w, ω[n+1] = ω[n] + α; cos
+synthesis from the baked Q15 table; A from max|x|; corrections on x − x̂):
+
+| Contract row | Fixture (independent) | Phase model | Portfolio | Verdict |
+| ------------ | --------------------- | ----------- | --------- | ------- |
+| B2 linear sweep | float chirp 917→+2.7 kHz | 8,483 B | **4,520 B** (OSC f3 cascade, kind 4 var 8) | loss, pinned |
+| B1 constant tone | float tone | (α=0 = control) | OSC family keeps the win | no regression |
+| B3 vibrato | float vib 5 Hz/60 Hz | measured | | miss expected (sinusoidal ω ≠ α-chirp) |
+| B4 damped sweep | float decay+sweep | measured | | recorded |
+| B5 two tones | float mixture | | | miss PINNED (phase > portfolio) |
+| B6 random FM | piecewise random f | | | rejection PINNED (phase > portfolio) |
+| noise | iid | honest reject (spill) | | |
+
+**Discovery worked. Representation lost.** The zero-crossing quadratic LS
+recovers the trajectory from the signal (measured: ω = 917 Hz exactly, α
+within ~10% of the generator's truth; fixture needs ≥ 8 crossings — the
+documented dependence), yet the complete description pays 1.88× the
+cascade's. The seven phase tests pass with B2's negative pinned.
+
+**G3-B.1 — quantization ablation** (hold the phase law + coder; vary
+only the waveform reconstruction; three reconstruction arms at the four
+phase-reference offsets):
+
+| Arm | Reconstruction | max \|r\| | H₀ (bits) | billed ≈ |
+| --- | -------------- | --------- | --------- | -------- |
+| Q0 | 24-bit acc, 12-bit LUT | 12,103 | 11.7 | 8,971 |
+| Q1 | + fractional interpolation | 12,097 | 11.7 | 8,969 |
+| Q3 | 48-bit acc + interpolation | **1,076** | 10.6 | **8,546** |
+
+The ablation's answer to the review's qualification:
+1. **LUT interpolation is NOT the dominant floor** (Q1 vs Q0 ≈ tied; pinned).
+2. **The phase ACCUMULATOR WIDTH was** — at 24 bits, the α grid's rounding
+   (±3e-8 rad/sample²) × n² = ±500 rad accumulated phase error = the measured
+   ±250-unit tail error exactly (pinned: Q3 ≥ 5× below Q1).
+3. **Correcting it still does not save the model** — Q3's residuals are 11×
+   smaller yet the complete cost stays above the cascade (every position
+   still codes ~±1-2 LUT ulp; an ideal H₀-coded residual ≈ 5.4 kB > 4,520).
+
+**Science.md conclusion** (the review's wording, confirmed with the
+ablation): the phase trajectory *successfully estimated nonstationary
+frequency parameters but failed the complete-description-length test on an
+independently generated linear sweep* — the current *decoder implementation*
+loses (dominated by accumulator quantization, then by residual sparsity),
+and the model itself has **insufficient MDL advantage on B2**.
+Phase family CLOSED for B2-class fixtures; the qualification that "the
+underlying phase-law representation is not proven intrinsically inefficient"
+is answered in the model-favor direction by G3-B.1's finding that precision
+is NOT the binding constraint — residual sparsity is.
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

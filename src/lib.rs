@@ -17,6 +17,8 @@ pub mod nested;
 
 pub mod g3;
 
+pub mod phase;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;

@@ -7,6 +7,24 @@ Format based on Keep a Changelog; versioning is SemVer.
 
 ### Measured (research only)
 
+- **G3-B phase trajectories: model DISCOVERS the dynamics, representation
+  LOSES the description test** (`src/phase.rs`, research-only): zero-crossing
+  quadratic LS recovers (φ0, ω0, α) from the signal (≥ 8 crossings required —
+  documented); 24-bit exact wrap arithmetic; B2's independent sweep fixture:
+  phase model 8,483 B vs the OSC f3 cascade's 4,520 B (1.88× — loss pinned).
+  B1 constant tone: no regression (engine keeps OSC); B5 two-tone miss and
+  B6 random-FM rejection pinned; B3/B4 recorded.
+- **G3-B.1 quantization ablation** (the review's focused experiment): LUT
+  interpolation ≈ NO effect (pinned); the 24-bit ACCUMULATOR WIDTH was the
+  dominant floor (48-bit + interpolation cuts max|r| 12,103 → 1,076, ~11×,
+  pinned); correcting it STILL doesn't save the model (complete cost 8,546 >
+  4,520; ideal H₀-coded residual ≈ 5.4 kB). Verdict: insufficient MDL
+  advantage on B2-class fixtures — the binding constraint is residual
+  SPARSITY, not precision. Phase family CLOSED. science.md §8.5.
+## [Unreleased]
+
+### Measured (research only)
+
 - **paste-G3-A: reversible integer lifting — DENIED in every placement**
   (`src/g3.rs::lift_transform`): direct lift +35 B vs best(x); after echo
   (swept winner g3/D=64) +16 B; after echo (G2-C pair) +25 B. Mechanism:
