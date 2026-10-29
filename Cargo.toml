@@ -1,8 +1,17 @@
 [package]
-name = "acoustics"
+name = "manifold-acoustics"
 version = "0.7.0"
 edition = "2021"
-description = "ACOUSTICS - Mathematical & Physics-Informed Audio Research Engine (v0.7)"
+description = "ACOUSTICS - Mathematical & Physics-Informed Audio Research Engine: exact reversible audio models ranked by complete serialized description length (MDL), pre-dimensionality battery, compositional echo research"
+license = "MIT"
+repository = "https://github.com/bageera/acoustics"
+readme = "README.md"
+keywords = ["audio", "codec", "compression", "lossless", "algorithmic-information"]
+categories = ["compression", "multimedia::audio", "science"]
+
+[lib]
+name = "acoustics"
+path = "src/lib.rs"
 
 [[bin]]
 name = "acoustics"
