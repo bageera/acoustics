@@ -116,13 +116,13 @@ echo "== stage 4: numerical regression =="
 CONSUMER_OUT="$(cd "$CONSUMER" && cargo run --release 2>/dev/null | tail -1)"
 echo "$CONSUMER_OUT"
 # ranges (science.md's recorded measurements ± slack for rounding/fit drift):
-grep -q "wire=6052B" <<<"$CONSUMER_OUT" || { echo "FAIL: wire size regressed from 6052"; exit 1; }
-grep -q "kind=4" <<<"$CONSUMER_OUT" || { echo "FAIL: portfolio model regressed"; exit 1; }
+grep -q "wire=4117B" <<<"$CONSUMER_OUT" || { echo "FAIL: wire size regressed from 4117 (v5/D3 floor)"; exit 1; }
+grep -q "kind=6" <<<"$CONSUMER_OUT" || { echo "FAIL: portfolio model regressed (expected the D3 kind-6 floor)"; exit 1; }
 grep -q "g5=1" <<<"$CONSUMER_OUT" || { echo "FAIL: g5 stage count regressed"; exit 1; }
 grep -qE "nested=Some\(54[0-9]{2}\)" <<<"$CONSUMER_OUT" || { echo "FAIL: nested cost out of range"; exit 1; }
 grep -qE "modal=Some\(\(89[0-9]{2}, 3\)\)" <<<"$CONSUMER_OUT" || { echo "FAIL: modal cost out of range"; exit 1; }
 grep -qE "phase=Some\(9[0-9]{3}\)" <<<"$CONSUMER_OUT" || { echo "FAIL: phase cost out of range"; exit 1; }
-grep -qE "g3=Some\(5[0-9]{2}\)" <<<"$CONSUMER_OUT" || { echo "FAIL: g3 ΔL out of range"; exit 1; }
+grep -qE "g3=Some\(0\)" <<<"$CONSUMER_OUT" || { echo "FAIL: g3 ΔL out of range (v5: D3 subsumes the DIFF transform gain — recorded)"; exit 1; }
 echo "numerical regression: all G-series rows inside their recorded ranges"
 
 echo "== stage 5: publish gate =="
