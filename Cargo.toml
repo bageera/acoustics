@@ -1,6 +1,6 @@
 [package]
 name = "manifold-acoustics"
-version = "0.8.1"
+version = "0.8.2"
 edition = "2021"
 description = "ACOUSTICS - Mathematical & Physics-Informed Audio Research Engine: exact reversible audio models ranked by complete serialized description length (MDL); pre-dimensionality battery, compositional echo, innovations anatomy"
 license = "MIT"

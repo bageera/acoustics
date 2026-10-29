@@ -27,6 +27,14 @@ Format based on Keep a Changelog; versioning is SemVer.
   model's own residual. Decision: a context coder on the correction stream is
   JUSTIFIED as the next wire milestone (payload VERSION 5); no new generative
   family first. science.md §8.7.
+## [0.8.2] — 2026-10-28
+
+### Fixed
+
+- `g3::{discover_delta_l, delta_l, echo_transform, identity_transform,
+  lift_transform, best_portfolio, TransformOutcome}` were still pub(crate)
+  (missed in 0.8.1's sweep) — publicized; caught by the same consumer gate.
+
 ## [0.8.1] — 2026-10-28
 
 ### Fixed
