@@ -666,6 +666,50 @@ under the complete-cost metric. The 4D branch's real value (spacetime
 acoustics, Green's functions, source-receiver geometry) requires spatial
 measurements mono cannot provide — reserved for the spatial-audio future as
 the review itself framed it.
+### 8.12 G7 — acoustic structure attribution (audit + transfer + perturbation + persistence)
+
+The G6 review's milestone (`src/g7.rs`, research-only), four arms:
+
+**G7-A — the G6-4D-4 audit (the review's order)**: the 1.42% stage0-vs-
+shipped "win" was an ACCOUNTING ARTIFACT. The stage-0 row billed
+corrections-only costs (mask RLE + zigzag varints + 3 varint coefficients),
+omitting the production framing (header, y0/y1 seeds, 4-byte-coefficient
+fields, the raw mask words the kind-4 families actually write). Re-billed
+with the EXACT wire via payload_len over every OSC variant:
+
+| Stream | shipped | best single OSC variant | shipped advantage |
+| ------ | ------- | ----------------------- | ----------------- |
+| example_word ch0 | 55,710 B | 60,539 B (var2) | 4,829 B (8.7%) |
+| can_you_stop ch0 | 113,946 B | 115,419 B (var2) | 1,473 B (1.3%) |
+| sample2 ch0 | 437,335 B | 542,767 B (var8) | 105,432 B (24.1%) |
+
+The COMPOSITE portfolio (cascade + its per-stage accounting) IS the winning
+representation on real speech — no unexplained audit gap remains.
+
+**G7-C — causal perturbation** (±2 Q15 units on a discovered stage's
+coefficients, can_you_stop w0): base 304 bits → +104..+160 bits (+34-53%)
+for every perturbation. Both coefficients are load-bearing; the compactness
+is genuinely carried by the discovered (c, r), not the surrounding coding.
+
+**G7-B — event transfer** (parameters from recording half A applied to half
+B, vs B's own fresh fit): transfer LOSES by 8-16% on all three streams
+(29,970 vs 24,175 B; 41,258 vs 37,895 B; 271,939 vs 249,088 B). Within one
+recording, the per-window stage parameters do NOT transfer — the fitted
+law is window-local, not a persistent physical system.
+
+**G7-D — coefficient persistence**: stage-0 (c, r) pairs across windows:
+99/100 distinct (sample2), 16/20 (can_you_stop), 9/9 (example_word) —
+consistent with G7-B: no per-window persistent physical law. The compactness
+the portfolio achieves on speech comes from the CASCADE's residual-splitting
+(many cheap local stages), not from a globally valid acoustic equation.
+
+**Implication for the ledger**: "which physical relationship won?" answered —
+on real speech, NONE persists across windows; the win is the cascade
+MACHINERY splitting residual structure into many short-lived local models.
+A transfer/physics claim (G7-B's ambition) needs parameters valid across
+events; measured here, they are not. Honest next ground per the original
+review: a broader recording corpus (music/environmental) IF any transfer
+hypothesis is revisited — with these floors as the starting baselines.
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

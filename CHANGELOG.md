@@ -104,6 +104,18 @@ Format based on Keep a Changelog; versioning is SemVer.
   the generic 4x4 skeptic arm confirms the review's prediction. Noise rejected,
   saturation exact. Spacetime/Clifford branch reserved for spatial audio.
 
+### Measured (research only)
+
+- **G7 acoustic structure attribution** (`src/g7.rs`): the G6-4D-4 1.42% "stage0
+  win" AUDITED and repudiated (accounting artifact; exact payload_len billing
+  shows the shipped portfolio beats the best single OSC variant on every real
+  stream by 1.3-24%). Causal perturbation: both recurrence coefficients
+  load-bearing (+34-53% corrections per ±2 Q15 step). Event transfer: parameters
+  do NOT transfer even across halves of one recording (refit wins by 8-16%);
+  per-window coefficients 99/100 distinct — the portfolio's speech win is the
+  cascade machinery (many short-lived local stages), not a persistent physical
+  law. science.md 8.12.
+
 ## [Unreleased]
 
 ### Measured (research only)
