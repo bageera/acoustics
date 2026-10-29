@@ -16,6 +16,17 @@ Format based on Keep a Changelog; versioning is SemVer.
   bugs caught by the billing instruments en route (missing /(2π) in the
   scan's accumulator conversion; a spurious +π/2 on the scanned phase).
   science.md §8.6.
+### Measured (research only)
+
+- **G5 innovations anatomy — the cascade's residual carries a 65.7% coder gap**
+  (`src/g5.rs`, diagnostic): stage-0 H₀ 7.809 bits vs conditional 3.716
+  (H(R|prev) — half the entropy is temporal structure), ACF lag-1 = 0.505,
+  state-conditioned spread 2.18× (the recurrence's magnitude predicts the
+  correction's size). G5-E: a D1-context on the deltas (same zigzag/RLE
+  machinery, billed both sides) = 4,489 B vs 5,518 B (−18.6%) on the winning
+  model's own residual. Decision: a context coder on the correction stream is
+  JUSTIFIED as the next wire milestone (payload VERSION 5); no new generative
+  family first. science.md §8.7.
 ## [Unreleased]
 
 ### Measured (research only)

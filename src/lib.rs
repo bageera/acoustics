@@ -21,6 +21,8 @@ pub mod phase;
 
 pub mod modal;
 
+pub mod g5;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;
@@ -465,7 +467,7 @@ pub(crate) fn osc_ls_fit_x(x: &[i64]) -> Option<(f64, f64)> {
 }
 
 /// LS fit on the original i16 signal (f2 seeding + research helpers).
-fn osc_ls_fit(samples: &[i16]) -> Option<(f64, f64)> {
+pub(crate) fn osc_ls_fit(samples: &[i16]) -> Option<(f64, f64)> {
     let x: Vec<i64> = samples.iter().map(|&s| s as i64).collect();
     osc_ls_fit_x(&x)
 }
@@ -517,7 +519,7 @@ pub(crate) fn osc0_generate(
 /// Corrections on positions base..len under selection masks: bit k covers
 /// position base+k. Bit set = correction nonzero and coded; clear = zero.
 /// Returns (masks, deltas in emission order).
-fn plan_corrections_masked(x: &[i64], y: &[i64], base: usize) -> (Vec<u32>, Vec<i64>) {
+pub(crate) fn plan_corrections_masked(x: &[i64], y: &[i64], base: usize) -> (Vec<u32>, Vec<i64>) {
     let mut masks = vec![0u32; (x.len() - base).div_ceil(32)];
     let mut deltas = Vec::new();
     for (k, i) in (base..x.len()).enumerate() {
@@ -530,7 +532,7 @@ fn plan_corrections_masked(x: &[i64], y: &[i64], base: usize) -> (Vec<u32>, Vec<
     (masks, deltas)
 }
 
-fn deltas_bytes(deltas: &[i64]) -> usize {
+pub(crate) fn deltas_bytes(deltas: &[i64]) -> usize {
     deltas.iter().map(|&d| varint_len(zigzag_encode(d))).sum()
 }
 

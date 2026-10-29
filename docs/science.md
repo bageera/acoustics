@@ -488,6 +488,38 @@ its representation reproduces the signal with cell-level error; every
 LUT-per-sample family carries a quantization cost per sample that
 compounding stages avoid.
 
+### 8.7 G5 — innovations anatomy: the cascade's residuals are 66% coder-entropy (v0.8-dev)
+
+The diagnostic (`src/g5.rs`; replays the winning cascade's stage loop — same
+LS seed, candidate neighborhood, closed-loop reconstruction — and measures
+per stage): on the G4-2 fixture (two independent tones, cascade winner):
+
+| Measurement | Value | Meaning |
+| ----------- | ----- | ------- |
+| stage-0 H₀ | 7.809 bits | marginal information of the corrections |
+| stage-0 H(R\|Rₚ₋₁) | **3.716** bits | **52% of the marginal entropy vanishes when the PREVIOUS correction is visible** |
+| coder gap | 5,518 B coded vs 1,892 B conditional floor | **65.7%** conditional gap |
+| ACF peak | lag 1, r = 0.505 | strong adjacent-position dependency |
+| state-conditional spread | 2.18× | the recurrence's internal magnitude predicts the correction's size (G5-D) |
+| stage 1 | residual NOT oscillator-like (LS degenerate) | greedy cascade = 1 stage here; multi-stage structure lives inside the one recurrence's corrections |
+
+**G5-E confirmed the structure is exploitable**: coding the deltas through a
+D1 CONTEXT (r'[n] = r[n] − r[n−1], same zigzag/RLE machinery, honest billing
+both sides) = **4,489 B vs 5,518 B (−18.6%)** on the winning model's own
+residual stream — measured, reproducible, and exactly what the conditional
+entropy predicted (Hcond/H0 = 0.48 ⇒ big temporal redundancy).
+
+**Decision (the review's rule)**: a reduction in conditional entropy was
+demonstrated ⇒ a context/correlation model on the cascade's correction stream
+is JUSTIFIED as the next wire milestone (payload VERSION 5; residual
+D1-context field). No new generative family until that ships — the
+"remaining bits" are not unpredictable; the coder hasn't been claiming them.
+
+The law refined (the review's wording + measured): efficient audio
+representation = compact dynamics + low-cost exact innovations; the
+innovations were NOT at their floor, at a 65.7% coder gap.
+
+G5-F (real audio) stays queued pending a corpus (the honest row).
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection
