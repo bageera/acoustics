@@ -3,44 +3,10 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
-### Measured (research only)
-
-- **G14 D4 follow-up** (src/g13.rs::g14_*): the external synthetic harness
-  D4 denial (parity/worse on 8 classes; zlib-era -19.6% = the compression
-  layer) does NOT hold on real audio - the in-repo definitive test (held-out,
-  complete-v5-portfolio comparison) shows D4 beats the ENTIRE portfolio on
-  piano by +3.1-4.0% beyond D3 (both partitions confirm); birds/river/speech
-  confirm each class' own step. Class law: differencing order rises with
-  smoothness (speech D1 / river D2 / birds D3 / piano D4), each step
-  selectable. D4 promotion (kind 7, v6 gate) = RECORDED, user's call.
-
 ## [Unreleased]
 
 ### Measured (research only)
 
-
-- **G4 additive modal models — DENIED, cascade mechanism named**
-  (`src/modal.rs`, research-only): greedy line-scan seeding (G4-A) + varpro
-  LS amplitudes + joint coordinate-descent refine (G4-B) with billed==wire
-  and exact decode on every row. Modal loses 2-4× on every fixture (single
-  tone 11,036 vs 2,839; two tones 8,974 vs 6,052; damped pair 12,818 vs
-  2,670; noise rejection pinned 12,320 ≥ 8,209). Mechanism (measured): the
-  per-sample LUT-quantization floor; the f3 cascade dodges it by integer
-  recurrence decomposition with cell-level residual. Two unit-conversion
-  bugs caught by the billing instruments en route (missing /(2π) in the
-  scan's accumulator conversion; a spurious +π/2 on the scanned phase).
-  science.md §8.6.
-### Measured (research only)
-
-- **G5 innovations anatomy — the cascade's residual carries a 65.7% coder gap**
-  (`src/g5.rs`, diagnostic): stage-0 H₀ 7.809 bits vs conditional 3.716
-  (H(R|prev) — half the entropy is temporal structure), ACF lag-1 = 0.505,
-  state-conditioned spread 2.18× (the recurrence's magnitude predicts the
-  correction's size). G5-E: a D1-context on the deltas (same zigzag/RLE
-  machinery, billed both sides) = 4,489 B vs 5,518 B (−18.6%) on the winning
-  model's own residual. Decision: a context coder on the correction stream is
-  JUSTIFIED as the next wire milestone (payload VERSION 5); no new generative
-  family first. science.md §8.7.
 ## [0.10.0] — 2026-10-29
 
 > Published to crates.io; verified by registry read-back (max 0.10.0) + a
@@ -326,6 +292,30 @@ Format based on Keep a Changelog; versioning is SemVer.
   - One accounting bug found en route: the container initially billed a
     14-byte header it does not write (headerless frame); fixed and pinned by
     the invariant test.
+
+### Measured (research only)
+
+- **G4 additive modal models — DENIED, cascade mechanism named**
+  (`src/modal.rs`, research-only): greedy line-scan seeding (G4-A) + varpro
+  LS amplitudes + joint coordinate-descent refine (G4-B) with billed==wire
+  and exact decode on every row. Modal loses 2-4× on every fixture (single
+  tone 11,036 vs 2,839; two tones 8,974 vs 6,052; damped pair 12,818 vs
+  2,670; noise rejection pinned 12,320 ≥ 8,209). Mechanism (measured): the
+  per-sample LUT-quantization floor; the f3 cascade dodges it by integer
+  recurrence decomposition with cell-level residual. Two unit-conversion
+  bugs caught by the billing instruments en route (missing /(2π) in the
+  scan's accumulator conversion; a spurious +π/2 on the scanned phase).
+  science.md §8.6.
+
+- **G5 innovations anatomy — the cascade's residual carries a 65.7% coder gap**
+  (`src/g5.rs`, diagnostic): stage-0 H₀ 7.809 bits vs conditional 3.716
+  (H(R|prev) — half the entropy is temporal structure), ACF lag-1 = 0.505,
+  state-conditioned spread 2.18× (the recurrence's magnitude predicts the
+  correction's size). G5-E: a D1-context on the deltas (same zigzag/RLE
+  machinery, billed both sides) = 4,489 B vs 5,518 B (−18.6%) on the winning
+  model's own residual. Decision: a context coder on the correction stream is
+  JUSTIFIED as the next wire milestone (payload VERSION 5); no new generative
+  family first. science.md §8.7.
 
 ## [0.7.0] — 2026-10-28
 
