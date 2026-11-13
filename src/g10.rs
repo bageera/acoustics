@@ -1,4 +1,6 @@
-//! G10 — uniform mask representation (research-only; wire untouched).
+//! G10 — uniform mask representation (research origin; **v7 adopted M2 on
+//! the production wire for PERIOD/OSC** — see `masks_rle`'s adaptive layer
+//! and the 0.11.0 CHANGELOG; this module remains the measurement record).
 //!
 //! The G9 review's mask-only ablation. The mask streams measured by G9
 //! (flat u32 words on PERIOD/OSC families; already-RLE on OP) are re-billed

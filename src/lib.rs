@@ -11,7 +11,10 @@ mod cos_q13;
 use cos_q13::COSQ13;
 
 mod masks_rle;
-use masks_rle::{mask_rle_wire_len, read_mask_rle, write_mask_rle};
+use masks_rle::{
+    mask_adaptive_cost, mask_rle_wire_len, mask_segmented_cost, read_mask_adaptive, read_mask_rle,
+    write_mask_adaptive, write_mask_rle,
+};
 
 pub mod nested;
 
@@ -57,12 +60,17 @@ pub(crate) mod g12;
 #[cfg(test)]
 pub(crate) mod g13;
 
+/// G16 research (the v7 four-arm gate: frozen v6 vs D5 vs mask layer vs
+/// both) — research-only, corpus-gated.
+#[cfg(test)]
+pub(crate) mod g16;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;
 
 pub const MAGIC: &[u8; 8] = b"ACUSTCS1";
-pub const VERSION: u8 = 6;
+pub const VERSION: u8 = 7;
 pub const MODEL_RAW: u8 = 0;
 pub const MODEL_D1: u8 = 1;
 pub const MODEL_D2: u8 = 2;
@@ -79,6 +87,11 @@ pub const MODEL_D3: u8 = 6;
 /// promotion (piano +3.1-4.0% beyond D3 AND below the complete v5 portfolio
 /// floor, held-out both partitions; birds/river reject it → selectable-only).
 pub const MODEL_D4: u8 = 7;
+/// v7 wire (G15, 0.11.0): fifth-order differences — the D-ladder's measured
+/// marginal continuation (piano +0.8-1.2% vs the COMPLETE v6 portfolio,
+/// held-out both partitions; birds/river/noise reject → selectable-only).
+/// Shipped ONLY bundled with the adaptive mask layer (the four-arm v7 gate).
+pub const MODEL_D5: u8 = 8;
 
 /// Research paths that need an encode() roundtrip without a real recording
 /// (G3 ΔL measurement) use this rate; cost is rate-independent (the wire
@@ -342,6 +355,17 @@ fn predictor_residuals(samples: &[i16], kind: u8) -> Vec<i64> {
             }
             r4
         }
+        MODEL_D5 => {
+            // first difference of the D4 stream (G15): the 5th difference of
+            // the signal, same-length convention (v[0] = r4's seed).
+            let r4 = predictor_residuals(samples, MODEL_D4);
+            let mut r5 = Vec::with_capacity(r4.len());
+            r5.push(r4[0]);
+            for w in r4.windows(2) {
+                r5.push(w[1] - w[0]);
+            }
+            r5
+        }
 
         _ => samples.iter().map(|&s| s as i64).collect(),
     }
@@ -385,7 +409,7 @@ fn period_payload_len(samples: &[i16], lag: usize) -> Option<usize> {
     Some(
         header_len(samples.len())
             + varint_len(lag as u64)
-            + masks.len() * 4
+            + mask_adaptive_cost(&masks)
             + head_bytes
             + tail_bytes,
     )
@@ -883,7 +907,7 @@ fn osc_plan(samples: &[i16], variant: usize) -> Option<OscPlan> {
                 let cost = header_len(n)
                     + variant_varint
                     + osc_closed_fields_bytes(0, grid, cwq, r2q, &[])
-                    + masks.len() * 4
+                    + mask_adaptive_cost(&masks)
                     + deltas_bytes(&deltas);
                 if best.as_ref().is_none_or(|b| cost < b.cost) {
                     best = Some(OscPlan {
@@ -925,7 +949,7 @@ fn osc_plan(samples: &[i16], variant: usize) -> Option<OscPlan> {
                 let cost = header_len(n)
                     + variant_varint
                     + osc_closed_fields_bytes(1, grid, cwq, r2q, &[])
-                    + masks.len() * 4
+                    + mask_adaptive_cost(&masks)
                     + deltas_bytes(&deltas);
                 if best.as_ref().is_none_or(|b| cost < b.cost) {
                     best = Some(OscPlan {
@@ -1035,7 +1059,7 @@ fn osc_plan(samples: &[i16], variant: usize) -> Option<OscPlan> {
                     + variant_varint
                     + osc_closed_fields_bytes(3, grid, 0, 0, &stages_typed);
                 for (m, d) in &stage_plans {
-                    cost += m.len() * 4 + deltas_bytes(d);
+                    cost += mask_adaptive_cost(m) + deltas_bytes(d);
                 }
                 let mut masks = Vec::new();
                 for (m, _) in &stage_plans {
@@ -1090,7 +1114,7 @@ fn osc_plan(samples: &[i16], variant: usize) -> Option<OscPlan> {
                         + varint_len(cand.phi0)
                         + varint_len(env_sel as u64)
                         + varint_len(0) // stride_sel
-                        + masks.len() * 4
+                        + mask_adaptive_cost(&masks)
                         + deltas_bytes(&deltas);
                     if best1.is_none_or(|(_, _, c)| cost < c) {
                         best1 = Some((cand, env_sel, cost));
@@ -1121,7 +1145,7 @@ fn osc_plan(samples: &[i16], variant: usize) -> Option<OscPlan> {
                     + varint_len(seed.phi0)
                     + varint_len(env_sel as u64)
                     + varint_len(sel as u64)
-                    + masks.len() * 4
+                    + mask_adaptive_cost(&masks)
                     + deltas_bytes(&deltas);
                 if best2.as_ref().is_none_or(|(_, b)| cost < b.cost) {
                     best2 = Some((
@@ -1201,8 +1225,15 @@ fn serialize_osc(variant: usize, out: &mut Vec<u8>, samples: &[i16]) -> Result<(
             }
         }
     }
-    for &m in &plan.masks {
-        out.extend_from_slice(&m.to_le_bytes());
+    let seg_word_lens: Vec<usize> = if plan.family == 3 {
+        vec![samples.len().div_ceil(32); plan.stages.len()]
+    } else {
+        vec![plan.masks.len()]
+    };
+    let mut at = 0usize;
+    for &len in &seg_word_lens {
+        write_mask_adaptive(&plan.masks[at..at + len], out);
+        at += len;
     }
     for &d in &plan.deltas {
         write_varint(out, zigzag_encode(d));
@@ -1216,7 +1247,7 @@ fn choose_model(samples: &[i16]) -> Model {
         kind: MODEL_RAW,
         param: 0,
     };
-    for kind in [MODEL_D1, MODEL_D2, MODEL_D3, MODEL_D4] {
+    for kind in [MODEL_D1, MODEL_D2, MODEL_D3, MODEL_D4, MODEL_D5] {
         if let Some(n) = payload_len(kind, 0, samples) {
             if n < best_len {
                 best = Model { kind, param: 0 };
@@ -1279,9 +1310,7 @@ pub(crate) fn serialize(
             let lag = model.param;
             write_varint(&mut out, lag as u64);
             let (residuals, masks) = period_plan(samples, lag).ok_or(ERR_TRUNCATED)?;
-            for &m in &masks {
-                out.extend_from_slice(&m.to_le_bytes());
-            }
+            write_mask_adaptive(&masks, &mut out);
             for &r in &residuals[..lag] {
                 write_varint(&mut out, zigzag_encode(r));
             }
@@ -1325,9 +1354,9 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
         return Err(format!("unsupported version {}", payload[8]));
     }
     let kind = payload[9];
-    if kind > MODEL_D4 {
-        // v5 wire: kinds 0..=6 (D3 is the v5 addition; the v4-era kinds are
-        // unchanged for v5 readers; version gating handles cross-version).
+    if kind > MODEL_D5 {
+        // v7 wire: kinds 0..=8 (D3/D4/D5 are the v5/v6/v7 additions; the
+        // earlier kinds are unchanged; version gating handles cross-version).
         return Err(format!("unknown model kind {kind}"));
     }
     let sample_rate = u32::from_le_bytes(payload[10..14].try_into().unwrap());
@@ -1357,12 +1386,7 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
         MODEL_PERIOD => {
             let lag = param;
             let mask_len = (count - lag).div_ceil(32);
-            let mut masks = Vec::with_capacity(mask_len);
-            for _ in 0..mask_len {
-                let b = payload.get(pos..pos + 4).ok_or(ERR_TRUNCATED)?;
-                masks.push(u32::from_le_bytes(b.try_into().unwrap()));
-                pos += 4;
-            }
+            let masks = read_mask_adaptive(payload, &mut pos, mask_len)?;
             let mut prev: Vec<i64> = Vec::with_capacity(count);
             for _ in 0..lag {
                 let z = read_varint(payload, &mut pos)?;
@@ -1451,6 +1475,36 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
                     3 => r + 4 * sm1 - 6 * sm2 + 3 * sm3,
                     _ => r + 4 * sm1 - 6 * sm2 + 4 * sm3 - sm4,
                 };
+                sm4 = sm3;
+                sm3 = sm2;
+                sm2 = sm1;
+                sm1 = v;
+                samples.push(i16_from_i64(v)?);
+            }
+        }
+        MODEL_D5 => {
+            // v7 wire (G15): the D5 symbols accumulate into the r4 stream
+            // (r4[k] = r4[k-1] + r5[k], r4[0] = r5[0]) and replay D4's
+            // hand-traced rows — the boundary degeneracies inherit
+            // automatically: the accumulated r4 reproduces the same-length
+            // D4 stream exactly, whose rows were pinned by the 4/5-sample
+            // roundtrips (r4[3]'s degenerate −3 included).
+            let (mut sm1, mut sm2, mut sm3, mut sm4): (i64, i64, i64, i64) = (0, 0, 0, 0);
+            let mut r4: Option<i64> = None;
+            for idx in 0..count {
+                let r = zigzag_decode(read_varint(payload, &mut pos)?);
+                let r4v = match r4 {
+                    None => r,
+                    Some(p) => p + r,
+                };
+                let v = match idx {
+                    0 => r4v,
+                    1 => r4v + 3 * sm1,
+                    2 => r4v + 4 * sm1 - 4 * sm2,
+                    3 => r4v + 4 * sm1 - 6 * sm2 + 3 * sm3,
+                    _ => r4v + 4 * sm1 - 6 * sm2 + 4 * sm3 - sm4,
+                };
+                r4 = Some(r4v);
                 sm4 = sm3;
                 sm3 = sm2;
                 sm2 = sm1;
@@ -1615,14 +1669,8 @@ fn decode_osc(
             masks.push(Vec::new());
             continue;
         }
-        let mb = mp.div_ceil(32) * 4;
-        let slice = payload.get(*pos..*pos + mb).ok_or(ERR_TRUNCATED)?;
-        let mut mv = Vec::with_capacity(mp.div_ceil(32));
-        for c in slice.as_chunks::<4>().0 {
-            mv.push(u32::from_le_bytes(*c));
-        }
-        *pos += mb;
-        masks.push(mv);
+        // mask_segments hold POSITIONS; the adaptive reader takes WORDS.
+        masks.push(read_mask_adaptive(payload, pos, mp.div_ceil(32))?);
     }
     // reconstruct
     let rec: Vec<i64> = match family {
@@ -2115,7 +2163,7 @@ pub mod research {
                     + varint_len(seed.phi0)
                     + varint_len(env_sel as u64)
                     + varint_len(sel as u64)
-                    + masks.len() * 4
+                    + mask_adaptive_cost(&masks)
                     + deltas_bytes(&deltas);
                 (sel, cost)
             })
@@ -2159,10 +2207,18 @@ pub mod research {
             let cost = if family == 0 {
                 let pred = osc0_generate(x[0], x[1], cwq, r2q, q, n)?;
                 let (masks, deltas) = plan_corrections_masked(&x, &pred, 2);
-                header_len(n) + variant_varint + 12 + masks.len() * 4 + deltas_bytes(&deltas)
+                header_len(n)
+                    + variant_varint
+                    + 12
+                    + mask_adaptive_cost(&masks)
+                    + deltas_bytes(&deltas)
             } else {
                 let (masks, deltas) = closed_plan(&x, cwq, r2q, q)?;
-                header_len(n) + variant_varint + 8 + masks.len() * 4 + deltas_bytes(&deltas)
+                header_len(n)
+                    + variant_varint
+                    + 8
+                    + mask_adaptive_cost(&masks)
+                    + deltas_bytes(&deltas)
             };
             dl_cost = Some(dl_cost.map_or(cost, |m| m.min(cost)));
             let cw_mse = (c * q as f64).round() as i64;
@@ -2173,6 +2229,70 @@ pub mod research {
         }
         Some((ls_cost?, dl_cost?))
     }
+}
+
+/// v6-era PERIOD billing (fixed 4-B mask words) — the four-arm's Arm-A basis.
+/// Same plan, so the number is the frozen production bytes by subtraction.
+pub fn period_len_v6(samples: &[i16], lag: usize) -> Option<usize> {
+    let v7 = payload_len(MODEL_PERIOD, lag, samples)?;
+    let (_residuals, masks) = period_plan(samples, lag)?;
+    let bonus = mask_adaptive_cost(&masks) - masks.len() * 4;
+    Some(v7 - bonus)
+}
+
+/// v6-era OSC billing (fixed 4-B mask words, no selector) — Arm-A basis.
+pub fn osc_len_v6(samples: &[i16], variant: usize) -> Option<usize> {
+    let plan = osc_plan(samples, variant)?;
+    let segs: Vec<usize> = if plan.family == 3 {
+        vec![samples.len().div_ceil(32); plan.stages.len()]
+    } else {
+        vec![plan.masks.len()]
+    };
+    let bonus = mask_segmented_cost(&plan.masks, &segs) - plan.masks.len() * 4;
+    Some(plan.cost - bonus)
+}
+
+/// The v7 four-arm's per-stream costs (A, B, C, D) — actual serialized byte
+/// counts under each configuration:
+///   A = frozen v6 (fixed mask words, kinds 0..=7)
+///   B = A + MODEL_D5 (isolates D5)
+///   C = v7 mask layer over the frozen-v6 kind set (isolates G10)
+///   D = C + MODEL_D5 = proposed v7 (both layers)
+/// Dense kinds and OP bill identically in both eras (no mask section / the
+/// unchanged RLE), so B = min(A, D5) and D = min(C, D5) exactly.
+pub fn arm_costs(samples: &[i16]) -> (usize, usize, usize, usize) {
+    let mut a = usize::MAX;
+    let mut c = usize::MAX;
+    for &k in &[MODEL_RAW, MODEL_D1, MODEL_D2, MODEL_D3, MODEL_D4] {
+        if let Some(len) = payload_len(k, 0, samples) {
+            a = a.min(len);
+            c = c.min(len);
+        }
+    }
+    for lag in 2..=96usize {
+        if let Some(v6) = period_len_v6(samples, lag) {
+            let v7 = payload_len(MODEL_PERIOD, lag, samples).unwrap_or(usize::MAX);
+            a = a.min(v6);
+            c = c.min(v7);
+        }
+    }
+    for v in 0..OSC_VARIANT_COUNT {
+        if let Some(v6) = osc_len_v6(samples, v) {
+            let v7 = payload_len(MODEL_OSC, v, samples).unwrap_or(usize::MAX);
+            a = a.min(v6);
+            c = c.min(v7);
+        }
+    }
+    for op in 0..OP_ARM_COUNT {
+        if let Some(len) = payload_len(MODEL_OP, op, samples) {
+            a = a.min(len);
+            c = c.min(len);
+        }
+    }
+    let d5 = payload_len(MODEL_D5, 0, samples).unwrap_or(usize::MAX);
+    let b = a.min(d5);
+    let d = c.min(d5);
+    (a, b, c, d)
 }
 
 #[cfg(test)]
@@ -2531,6 +2651,111 @@ mod tests {
         }
     }
 
+    /// D5 wire acceptance (v7/G15): exact identity incl. the short-stream
+    /// boundary inheritance (the accumulate-then-replay decoder reproduces
+    /// D4's hand-traced rows for EVERY index, so 1..6-sample streams pin the
+    /// boundary rows), selection, and the version gate.
+    #[test]
+    fn d5_wire_roundtrip_and_boundary() {
+        for (name, samples) in [
+            ("1", vec![7i16]),
+            ("2", vec![7i16, -9]),
+            ("3", vec![7i16, -9, 41]),
+            ("4", vec![7i16, -9, 41, -3]),
+            ("5", vec![7i16, -9, 41, -3, 8]),
+            ("6", vec![7i16, -9, 41, -3, 8, 12]),
+            ("smooth", smooth_fixture()),
+            ("noise", noise_fixture()),
+            ("silence", vec![0i16; 4096]),
+        ] {
+            let payload5 = serialize(
+                Model {
+                    kind: MODEL_D5,
+                    param: 0,
+                },
+                44100,
+                &samples,
+            )
+            .expect("ser5");
+            let (_, back5, m5) = decode_payload(&payload5).expect("dec5");
+            assert_eq!(back5, samples, "{name}: D5-kind exact");
+            assert_eq!(m5.kind, MODEL_D5);
+            assert_eq!(payload5[8], VERSION, "v7 wire");
+            for older_v in [4u8, 5, 6] {
+                let mut older = payload5.clone();
+                older[8] = older_v;
+                assert!(
+                    decode_payload(&older).is_err(),
+                    "old VERSION {older_v} rejects"
+                );
+            }
+            // the metric must equal the wire for every D5 candidate too
+            assert_eq!(
+                payload_len(MODEL_D5, 0, &samples).expect("len"),
+                payload5.len(),
+                "{name}: D5 metric == serialize"
+            );
+            // the D5 stream must re-accumulate exactly through the r4 stream
+            // (the inversion check the research module pins, on the wire path)
+            let r5 = predictor_residuals(&samples, MODEL_D5);
+            assert_eq!(r5.len(), samples.len(), "{name}: same-length stream");
+        }
+    }
+
+    /// D5 selection class law (v7): the real-piano continuation win is
+    /// corpus-gated (the synthetic smooth ladder reads FLAT — the G15
+    /// instrument); broadband must fall back to D2.
+    #[test]
+    #[ignore] // corpus-gated: scripts/g12_fetch.sh
+    fn d5_selection_class_law_real() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/g12");
+        let data = std::fs::read(format!("{dir}/emotional_piano.wav")).expect("g12_fetch");
+        let (_rate, streams) = crate::parse_wav_multichannel(&data).expect("parse");
+        for y in &streams {
+            let d5 = payload_len(MODEL_D5, 0, y).expect("d5 whole");
+            let d4 = payload_len(MODEL_D4, 0, y).expect("d4 whole");
+            eprintln!(
+                "D5 {d5} vs D4 {d4} on REAL piano ({:+} B)",
+                d4 as i64 - d5 as i64
+            );
+            assert!(d5 < d4, "D5 must beat D4 on the real piano class");
+        }
+        let noise = noise_fixture();
+        let d5n = payload_len(MODEL_D5, 0, &noise).expect("d5n");
+        let d2n = payload_len(MODEL_D2, 0, &noise).expect("d2n");
+        assert!(d5n > d2n, "D5 must lose broadband to D2");
+    }
+
+    /// v7 hostile: a mask payload whose adaptive selector byte is neither
+    /// 0 (fixed) nor 1 (RLE) rejects — the selector is validated on decode.
+    #[test]
+    fn bad_mask_selector_rejected() {
+        // a PERIOD payload (its mask section is adaptive in v7)
+        let lag = 8;
+        let samples: Vec<i16> = (0..512usize)
+            .map(|i| (i % lag == 0) as i16 * 1000 + 3)
+            .collect();
+        let payload = serialize(
+            Model {
+                kind: MODEL_PERIOD,
+                param: lag,
+            },
+            44100,
+            &samples,
+        )
+        .expect("ser");
+        // locate the selector byte: 8 magic + 1 version + 1 kind + 4 rate +
+        // varint(count) + varint(lag)
+        let mut pos = 14usize;
+        let _count = read_varint(&payload, &mut pos).expect("count");
+        let _l = read_varint(&payload, &mut pos).expect("lag");
+        let mut broken = payload.clone();
+        broken[pos] = 2u8;
+        assert!(
+            decode_payload(&broken).is_err(),
+            "mask selector 2 must reject"
+        );
+    }
     /// D4 selection class law (v6): the real-piano win is corpus-gated (the
     /// synthetic smooth fixture reads D4 ≈ D3 — the near-linear-phase tie the
     /// G14 harness discovered — so the promotion claim lives ONLY on real
@@ -2692,7 +2917,7 @@ mod tests {
             ("smooth_decaying", &smooth),
         ];
         for (fname, samples) in &fixtures {
-            for &kind in &[MODEL_RAW, MODEL_D1, MODEL_D2, MODEL_D3, MODEL_D4] {
+            for &kind in &[MODEL_RAW, MODEL_D1, MODEL_D2, MODEL_D3, MODEL_D4, MODEL_D5] {
                 let n = payload_len(kind, 0, samples).expect("len");
                 let ser = serialize(Model { kind, param: 0 }, 44100, samples).expect("ser");
                 assert_eq!(

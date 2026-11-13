@@ -1070,6 +1070,50 @@ rational path is bundling a D5 promotion with the next wire change (the
 G10/G11 mask-representation work) or standing down at ~1%. Not promoted in
 this milestone; the wire is untouched.
 
+### 8.21 G16 — the v7 four-arm gate: MODEL_D5 (kind 8) + the adaptive mask layer (payload VERSION 7)
+
+The authorization's experiment: D5 alone does not justify a wire revision,
+the mask layer alone does not justify one — the COMBINED candidate must pass
+its own complete gate. Four arms, attribution preserved, every arm billing
+ACTUAL serialized byte counts (`research::arm_costs`; the same numbers the
+invariant tests prove byte-identical to the serializers):
+
+| arm | D5 | masks | purpose |
+|---|---|---|---|
+| A | off | fixed (frozen v6) | the frozen production wire |
+| B | on | fixed | isolate D5 |
+| C | off | adaptive (v7) | isolate the mask layer |
+| D | on | adaptive | proposed v7 |
+
+Arm A is anchored to the RECORDED production bytes: its piano rows
+reproduce 0.10.0's wire rows exactly (726,229/735,190), so the v6 mirror
+billing is byte-exact, not an estimator.
+
+Measured (corpus-gated, held-out partitions):
+
+- piano ch0 WHOLE: A 726,229 | B 721,261 | C 726,229 | D 721,261 —
+  D-vs-A −4,968 B (+0.68%); ch1: A 735,190 | D 730,424 (−4,766 B, +0.65%).
+  Partitions: decide −1,762/−2,236 B, eval −3,097/−2,463 B — both confirm.
+  Attribution: B-vs-A = D5's whole share, C-vs-A = 0 — the piano class
+  rides dense kinds (no mask section), so v7's piano win is pure D5, and
+  the mask layer costs it nothing.
+- PERIOD-2 speech (can_you_stop.wav, 24 kHz, kind 3 lag 2 selected):
+  A 113,946 → D 111,093 = −2,853 B — G10's measured 2.5% anchor
+  recapitulated EXACTLY on the production payload.
+- birds / river / noise / smooth-synthetic: D-vs-A = +0 B — the selected
+  models there are dense kinds or RAW (no mask section), so not even the
+  selector's +1 B appears; zero whole-payload regressions. The two other
+  speech files select kind 1 (D1: no masks) — the authorization's
+  "signaling only where a mask representation exists" honored by
+  construction.
+- OP masks unchanged (its original always-RLE sections ride v7 untouched);
+  v6-and-earlier payloads decode-error cleanly ("unsupported version");
+
+  every v6 kind byte-layout for dense kinds is identical in v7.
+
+Release condition PASSES on both authorized targets. v7 shipped as
+manifold-acoustics 0.11.0.
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

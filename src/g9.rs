@@ -14,13 +14,16 @@
 //! 1. metadata — magic + version + kind + rate + count + kind markers
 //! 2. coefficients — PERIOD lag; OSC cwq/r2q; f2 selectors; f3 stage (c,r)
 //! 3. seeds — family-0 y0/y1
-//! 4. masks — flat u32 words (4 B) or OP mask-RLE bytes
+//! 4. masks — v7 adaptive per-segment representations (1 selector byte +
+//!    fixed-or-RLE body per stage segment; per-stage boundaries preserved),
+//!    OP's original always-RLE bytes
 //! 5. residuals — zigzag varints
 //! 6. segmentation — (unused on this wire: single-window payloads; kept for
 //!    the category contract)
 //! 7. other — OP arms' inverse-model streams (loop length, echo delay, ylen,
 //!    base zigzags), RAW literal samples
 
+use crate::masks_rle::{read_mask_rle, MASK_SEL_FIXED};
 use crate::{choose_model, serialize, varint_len, MODEL_OP, MODEL_OSC, MODEL_PERIOD, MODEL_RAW};
 
 /// One accounted byte run on the wire.
@@ -31,6 +34,21 @@ struct Span {
 }
 
 const RAW_SUBMODE_RESIDUAL: u8 = 0;
+
+/// v7 mask segment wire length (selector + chosen body) at `pos`, WITHOUT
+/// advancing — the walker stays cursor-parallel over the writer's own bytes
+/// (a malformed frame here is an invariant-test failure, not recovery).
+fn adaptive_mask_len(payload: &[u8], pos: usize, words: usize) -> usize {
+    let sel = payload[pos];
+    if sel == MASK_SEL_FIXED {
+        1 + words * 4
+    } else {
+        let mut p2 = pos + 1;
+        read_mask_rle(payload, &mut p2, words)
+            .expect("g9 ledger walks the writer's own bytes: RLE frame");
+        1 + (p2 - (pos + 1))
+    }
+}
 
 /// Build the ledger by walking the production wire layout of the chosen
 /// model. Returns (spans, payload). Every byte is covered exactly once.
@@ -86,7 +104,7 @@ fn ledger(model: crate::Model, rate: u32, samples: &[i16]) -> (Vec<Span>, Vec<u8
                 end: payload.len(),
             });
         }
-        crate::MODEL_D1 | crate::MODEL_D2 | crate::MODEL_D3 | crate::MODEL_D4 => {
+        crate::MODEL_D1 | crate::MODEL_D2 | crate::MODEL_D3 | crate::MODEL_D4 | crate::MODEL_D5 => {
             spans.push(Span {
                 category: "residuals",
                 begin: pos,
@@ -103,7 +121,7 @@ fn ledger(model: crate::Model, rate: u32, samples: &[i16]) -> (Vec<Span>, Vec<u8
             pos += n;
             let lag = model.param;
             let mask_len = (samples.len() - lag).div_ceil(32);
-            let m_end = pos + mask_len * 4;
+            let m_end = pos + adaptive_mask_len(&payload, pos, mask_len);
             spans.push(Span {
                 category: "masks",
                 begin: pos,
@@ -127,8 +145,8 @@ fn ledger(model: crate::Model, rate: u32, samples: &[i16]) -> (Vec<Span>, Vec<u8
             let variant = model.param;
             let family = crate::osc_variant_family(variant);
             let grid = crate::osc_variant_grid(variant);
-            let mask_len = (samples.len()).div_ceil(32) * 4; // f1/f2/f3 segment
-            let mask_len0 = (samples.len() - 2).div_ceil(32) * 4; // f0 segment
+            let mask_len = samples.len().div_ceil(32); // f1/f2/f3 segment words
+            let mask_len0 = (samples.len() - 2).div_ceil(32); // f0 segment words
             match family {
                 0 => {
                     spans.push(Span {
@@ -160,7 +178,7 @@ fn ledger(model: crate::Model, rate: u32, samples: &[i16]) -> (Vec<Span>, Vec<u8
                         });
                         pos += 8;
                     }
-                    let m_end = pos + mask_len0;
+                    let m_end = pos + adaptive_mask_len(&payload, pos, mask_len0);
                     spans.push(Span {
                         category: "masks",
                         begin: pos,
@@ -197,7 +215,7 @@ fn ledger(model: crate::Model, rate: u32, samples: &[i16]) -> (Vec<Span>, Vec<u8
                         });
                         pos += 8;
                     }
-                    let m_end = pos + mask_len;
+                    let m_end = pos + adaptive_mask_len(&payload, pos, mask_len);
                     spans.push(Span {
                         category: "masks",
                         begin: pos,
@@ -226,7 +244,7 @@ fn ledger(model: crate::Model, rate: u32, samples: &[i16]) -> (Vec<Span>, Vec<u8
                         });
                         pos += n;
                     }
-                    let m_end = pos + mask_len;
+                    let m_end = pos + adaptive_mask_len(&payload, pos, mask_len);
                     spans.push(Span {
                         category: "masks",
                         begin: pos,
@@ -267,7 +285,7 @@ fn ledger(model: crate::Model, rate: u32, samples: &[i16]) -> (Vec<Span>, Vec<u8
                     }
                     // one mask segment PER STAGE
                     for _ in 0..stages {
-                        let m_end = pos + mask_len;
+                        let m_end = pos + adaptive_mask_len(&payload, pos, mask_len);
                         spans.push(Span {
                             category: "masks",
                             begin: pos,

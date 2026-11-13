@@ -4,7 +4,7 @@
 
 A reversible audio-model codec research engine. Every payload decodes to the exact original samples; every experiment pays a measured, explicit information cost.
 
-**Current state (2026-10):** wire v6 (`RAW`/`D1`/`D2`/`D3`/`D4`/`PERIOD`/`OSC`/`OP 0..15`, mask-RLE on OP), 82 tests + 5 corpus-gated tests, publishing to [crates.io](https://crates.io/crates/manifold-acoustics) as 0.7.0 → 0.8.0 → 0.8.1 → 0.8.2 → 0.9.0 (D3 promotion) → **0.10.0 (D4 promotion)** with the release gate `scripts/release-gate.sh` (five stages: fmt/clippy/release tests + exact-CLI roundtrip → `package --locked` + tarball audit → consumer FROM THE PACKAGED CRATE → numeric regression → publish behind `ACOUSTICS_RELEASE=1`). The research record now runs the G-line — attribution (G7), coefficient budget (G8), bitstream anatomy (G9), uniform masks (G10), residual audit (G11-A), acoustic diversity (G12), D3 residual coding (G13), the D4 follow-up (G14) — every result with its honest verdict in [docs/science.md](docs/science.md) §8; highlights below.
+**Current state (2026-11):** wire v7 (`RAW`/`D1`/`D2`/`D3`/`D4`/`D5`/`PERIOD`/`OSC`/`OP 0..15`, adaptive mask-RLE on PERIOD/OSC, original RLE on OP), 88 tests + 7 corpus-gated tests, publishing to [crates.io](https://crates.io/crates/manifold-acoustics) as 0.7.0 → 0.8.0 → 0.8.1 → 0.8.2 → 0.9.0 (D3 promotion) → 0.10.0 (D4 promotion) → **0.11.0 (D5 + adaptive masks, the combined v7 candidate)** with the release gate `scripts/release-gate.sh` (five stages: fmt/clippy/release tests + exact-CLI roundtrip → `package --locked` + tarball audit → consumer FROM THE PACKAGED CRATE → numeric regression → publish behind `ACOUSTICS_RELEASE=1`). The research record now runs the G-line — attribution (G7), coefficient budget (G8), bitstream anatomy (G9), uniform masks (G10), residual audit (G11-A), acoustic diversity (G12), D3 residual coding (G13), the D4 follow-up (G14), the D5 ladder probe (G15), the v7 four-arm gate (G16) — every result with its honest verdict in [docs/science.md](docs/science.md) §8; highlights below.
 
 
 The measured research record — foundations, per-milestone experiments, and the
@@ -26,6 +26,7 @@ The encoder serializes each candidate completely *in the payload format itself*,
 | `D1` (1) | first-order differences | residual stream (first sample coded directly) |
 | `D2` (2) | second-order differences | second-derivative residual stream |
 | `D4` (7, v6) | fourth-order differences | — the G14 class win: +3.1-4.0% beyond D3 on the REAL piano vs the complete v5 portfolio (held-out, both partitions); selectable (birds/river reject) |
+| `D5` (8, v7) | fifth-order differences | — the G15 continuation (piano +0.8-1.2% vs the complete v6 portfolio, both partitions), shipped ONLY bundled with the adaptive mask layer (the G16 four-arm gate); selectable (birds/river/noise reject) |
 | `D3` (6, v5) | third-order differences | third-derivative residual stream — the G12/G13 class-conditional win: piano +14-17.8% vs the complete v4 portfolio (held-out, both channels) — selectable (broadband rejects, so portfolio picks it only when it wins) |
 | `PERIOD` (3) | difference vs. earlier sample at lag L | dense lag sweep 2..=96, per-32-sample selection bitmasks, nonzero residual varint stream |
 | `OSC` (4) | damped-oscillator family (3 families × 2 grids) | family fields + masked corrections |
@@ -242,7 +243,8 @@ controls. Full tables in science.md §8.2-8.18; the honest ledger:
 | G7 attribution | the "win" was an accounting artifact | shipped beats the best single OSC variant by 1.3-24% on real speech; coefficients local (refit beats transfer 8-16%) |
 | G8 coefficient budget | closed at the gate | stage coefficients = 0.09-0.10% of payload — even perfect prediction cannot matter |
 | G9 bitstream anatomy | residuals own the payload | 91-100% of real-speech bytes; masks only 9.1% (PERIOD-2) / 8.5% (cascade); the ledger comes from the REAL writer |
-| G10 uniform mask RLE | real, small | +2,853 B (2.5%) on PERIOD-2; RLE LOSES on dense word masks (adaptive M2 required); corpus-wide ~0.5% |
+| G10 uniform mask RLE | real, small | +2,853 B (2.5%) on PERIOD-2; RLE LOSES on dense word masks (adaptive M2 required); corpus-wide ~0.5%; SHIPPED in v7 (adaptive selector on PERIOD/OSC, OP untouched) |
+| G15 the D-ladder's endgame | D5 marginally continues | piano +0.8-1.2% vs the complete v6 portfolio (both partitions); birds −18..−20% / river −26% reject; the continuation win shrinks ~4× per order — bounded by the varint coder, not stream structure |
 | G11-A residual audit | floor identified | long streams 16-16.5% above H0 — the integral varint floor; only a fractional-bit backend reaches it (gated, unbuilt) |
 | G12 acoustic diversity | the first genuine new signal | music/environment = D2 (62-72% of PCM, exact); lag-1 Hcond 42-67% below actual at n >= 700k — the structure speech never had |
 | G13 D3 residual coding | **PROMOTED (v5 wire)** | piano +14.0-17.6% held-out vs D2; river -7.4..-8.1% (dies on stochastic streams, as the noise reject predicts) — an adaptive-kind wire candidate |

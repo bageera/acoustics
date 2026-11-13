@@ -4,6 +4,74 @@ use crate::{read_varint, varint_len, write_varint, ERR_TRUNCATED};
 /// all-zero mask table for 5,152 samples cost 644 B). Wire: varint(run_count),
 /// then per run varint(count) with runs ALTERNATING zero-run/data-run starting
 /// with zero-run; a data run's raw u32 words follow its count.
+///
+/// v7 (G10): an ADAPTIVE per-mask-segment representation rides the production
+/// wire for PERIOD/OSC payloads. Each mask segment (one segment = one stage's
+/// table; per-stage boundaries preserved) carries a 1-byte selector followed by
+/// the SMALLER of (a) the v6-era flat words and (b) this RLE. Selector 0 =
+/// fixed u32 LE words, 1 = the RLE frame below. OP keeps its original
+/// always-RLE sections (no selector) — unchanged by version (authorization:
+/// new signaling only where a mask representation exists and improves).
+/// D1-style dense kinds and RAW carry no mask section at all.
+pub(crate) const MASK_SEL_FIXED: u8 = 0;
+pub(crate) const MASK_SEL_RLE: u8 = 1;
+
+/// Exact wire bytes of one adaptive mask segment: selector + min(fixed, RLE).
+/// The v7 selection metric for every mask-carrying kind.
+pub(crate) fn mask_adaptive_cost(masks: &[u32]) -> usize {
+    let fixed = masks.len() * 4;
+    let rle = mask_rle_wire_len(masks);
+    fixed.min(rle) + 1
+}
+
+/// Cost of a concatenated mask stream with per-segment word counts (the
+/// OscPlan's layout): sum of the adaptive cost per stage segment.
+pub(crate) fn mask_segmented_cost(masks: &[u32], seg_word_lens: &[usize]) -> usize {
+    let mut at = 0usize;
+    let mut cost = 0usize;
+    for &len in seg_word_lens {
+        cost += mask_adaptive_cost(&masks[at..at + len]);
+        at += len;
+    }
+    cost
+}
+
+pub(crate) fn write_mask_adaptive(masks: &[u32], out: &mut Vec<u8>) {
+    let fixed = masks.len() * 4;
+    let rle = mask_rle_wire_len(masks);
+    if rle < fixed {
+        out.push(MASK_SEL_RLE);
+        write_mask_rle(masks, out);
+    } else {
+        out.push(MASK_SEL_FIXED);
+        for &m in masks {
+            out.extend_from_slice(&m.to_le_bytes());
+        }
+    }
+}
+
+pub(crate) fn read_mask_adaptive(
+    payload: &[u8],
+    pos: &mut usize,
+    word_count: usize,
+) -> Result<Vec<u32>, String> {
+    let sel = *payload.get(*pos).ok_or(ERR_TRUNCATED)?;
+    *pos += 1;
+    match sel {
+        MASK_SEL_FIXED => {
+            let mut masks = Vec::with_capacity(word_count);
+            for _ in 0..word_count {
+                let b = payload.get(*pos..*pos + 4).ok_or(ERR_TRUNCATED)?;
+                masks.push(u32::from_le_bytes(b.try_into().unwrap()));
+                *pos += 4;
+            }
+            Ok(masks)
+        }
+        MASK_SEL_RLE => read_mask_rle(payload, pos, word_count),
+        _ => Err(format!("invalid mask selector {sel}")),
+    }
+}
+
 pub(crate) fn mask_rle_wire_len(masks: &[u32]) -> usize {
     // zero-run-first: when the table begins with a data run the writer prepends a
     // 0-length zero run (+1 run, +1 count varint).
