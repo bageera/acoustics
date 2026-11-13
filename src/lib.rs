@@ -189,8 +189,10 @@ pub fn parse_wav(data: &[u8]) -> Result<(u32, Vec<i16>), String> {
                 return Err("odd-sized data chunk".into());
             }
             let samples: Vec<i16> = body
-                .chunks_exact(2)
-                .map(|c| i16::from_le_bytes(c.try_into().unwrap()))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| i16::from_le_bytes(*c))
                 .collect();
             return match rate {
                 Some(r) if !samples.is_empty() => Ok((r, samples)),
@@ -1616,8 +1618,8 @@ fn decode_osc(
         let mb = mp.div_ceil(32) * 4;
         let slice = payload.get(*pos..*pos + mb).ok_or(ERR_TRUNCATED)?;
         let mut mv = Vec::with_capacity(mp.div_ceil(32));
-        for c in slice.chunks_exact(4) {
-            mv.push(u32::from_le_bytes(c.try_into().unwrap()));
+        for c in slice.as_chunks::<4>().0 {
+            mv.push(u32::from_le_bytes(*c));
         }
         *pos += mb;
         masks.push(mv);

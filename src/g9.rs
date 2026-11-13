@@ -502,8 +502,10 @@ fn vint_value(payload: &[u8], at: usize, n: usize) -> usize {
 fn flat(payload: &[u8], pos: &mut usize, words: usize) -> Vec<u32> {
     let b = payload[*pos..*pos + words * 4].to_vec();
     *pos += words * 4;
-    b.chunks_exact(4)
-        .map(|c| u32::from_le_bytes(c.try_into().unwrap()))
+    b.as_chunks::<4>()
+        .0
+        .iter()
+        .map(|c| u32::from_le_bytes(*c))
         .collect()
 }
 
