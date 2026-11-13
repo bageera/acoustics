@@ -1020,6 +1020,56 @@ degenerate k=2 case) hand-traced and pinned by the 4-sample roundtrip; the
 synthetic smooth fixture measures D4 ≈ D3 (+2 B, the near-linear-phase tie)
 → the promotion claim lives ONLY on real recordings (the class-law test is
 corpus-gated: d4_selection_class_law_real). G10/entropy-coders NOT bundled.
+
+### 8.20 G15 — the D-ladder's endgame: D5 measured (the ladder marginally continues; the promotion gate PASSES on piano; wire = USER's call)
+
+The question: does differencing continue past D4? The decision law
+(D4 is IN the shipped portfolio) makes the probe cheap: D5 ≥ D4 on held-out
+windows CLOSES the ladder with no sweep owed; a WIN opens the complete-v6
+portfolio gate (G15-B). Instrument (`src/g13.rs::g15_*`): first difference of
+the D4 stream, same-length convention (r5[0] = r4[0]), raw varint billing,
+identical framing, both partitions (decide = windows [0, W/2), eval =
+[W/2, W)).
+
+G15 ladder probe (raw varint D5 vs D4, % of D4):
+
+| class | file | eval ch0 / ch1 | decide ch0 / ch1 |
+|---|---|---|---|
+| piano | emotional_piano | **+0.83 / +0.64** | **+0.46 / +0.58** |
+| birds | park_birds | −15.52 / −15.62 | −16.04 / −16.12 |
+| river | park_river | −7.61 / −5.64 | −7.65 / −5.53 |
+
+G15-B — the portfolio gate the piano WIN opened (D5 vs the ENTIRE v6
+portfolio per held-out window, payload_len billing, % of portfolio):
+
+| class | eval ch0 / ch1 | decide ch0 / ch1 |
+|---|---|---|
+| piano | **+1.19 / +1.00** | **+0.83 / +0.94** |
+| birds | −18.23 / −20.12 | −18.75 / −19.70 |
+| river | −26.45 / −26.16 | −26.57 / −26.45 |
+
+Verdict: **the candidate gate PASSES on piano, held-out BOTH partitions**
+(same form as D3/D4's promotion gates), while birds (−18..−20%) and river
+(−26%) reject — the class law extends unchanged. The marginal continuation
+win shrinks ~4× per order on the same class: D3 +17.8/+14.2 → D4 +3.1-4.0 →
+D5 +0.8-1.2 (all portfolio-relative, piano). Mechanism note (measured, not
+speculative): each order's savings converge toward the varint floor — the
+remaining smooth-stream structure rides the same integer backend whose
+integral-varint cost is the measured binding constraint (G11's 16% integral
+floor), so the ladder's returns are bounded by the coder, not by structure.
+
+Synthetic controls (the synthetic-only harness law repeats): noise D5 LOSES
+(+94 B, pinned); the smooth synthetic measures D2=4097 → D3=4098 → D4=4099 →
+D5=4100 — FLAT (+1 B/order), while the real piano continues to pay —
+promotion claims live ONLY on real recordings, pinned corpus-gated.
+
+Wire status: **candidate gate PASSED; promotion = RECORDED, USER's call.**
+Recommendation context: ~1% piano-only ≈ 6-9 kB on the recorded piano files
+against a payload VERSION bump (v7) + the five-stage release gate — the
+rational path is bundling a D5 promotion with the next wire change (the
+G10/G11 mask-representation work) or standing down at ~1%. Not promoted in
+this milestone; the wire is untouched.
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

@@ -69,6 +69,24 @@ fn d4_varint_cost(samples: &[i16]) -> usize {
     varint_sum(d4_stream(samples).iter())
 }
 
+/// The D5 symbol stream (G15 ladder probe): first difference of the D4
+/// stream — the fifth difference of the signal. Same-length convention
+/// (r5[0] = r4's seed) — pure accumulation semantics, apples-to-apples
+/// varint count with D4.
+fn d5_stream(samples: &[i16]) -> Vec<i64> {
+    let r4 = d4_stream(samples);
+    let mut r5 = Vec::with_capacity(r4.len());
+    r5.push(r4[0]);
+    for w in r4.windows(2) {
+        r5.push(w[1] - w[0]);
+    }
+    r5
+}
+
+fn d5_varint_cost(samples: &[i16]) -> usize {
+    varint_sum(d5_stream(samples).iter())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -307,5 +325,239 @@ mod tests {
             }
         }
         eprintln!("{rows}");
+    }
+
+    /// G15 synthetic contracts: (a) white noise — D5 must LOSE vs D4 (the
+    /// binomial spread compounds with order), (b) a smooth synthetic (slow
+    /// tones + vibrato, structural counter printed) shows the flattening row
+    /// — the pin is written after the measurement.
+    #[test]
+    fn g15_d5_noise_reject_and_smooth_row() {
+        // noise (same generator as the G13 control)
+        let mut xr = 0xAB1DE_u64;
+        let noise: Vec<i16> = (0..4096)
+            .map(|_| {
+                xr ^= xr << 13;
+                xr ^= xr >> 7;
+                xr ^= xr << 17;
+                (((xr >> 33) % 65536) as i32 - 32768) as i16
+            })
+            .collect();
+        let d4 = d4_varint_cost(&noise);
+        let d5 = d5_varint_cost(&noise);
+        eprintln!("G15 noise: D4={d4} D5={d5} (must LOSE: {})", d5 > d4);
+        assert!(d5 > d4, "D5 must lose on white noise");
+        // smooth synthetic: 220 + 440 Hz tones, slow vibrato; 4096 samples
+        let n = 4096usize;
+        let smooth: Vec<i16> = (0..n)
+            .map(|i| {
+                let t = i as f64 * (0.25 / n as f64);
+                let w = 220.0 * std::f64::consts::TAU * t;
+                let body = 3000.0 * w.sin() + 1200.0 * (2.0 * w).sin();
+                let ampl = 0.98 + 0.02 * (6.0 * std::f64::consts::TAU * t).sin();
+                (body * ampl).round() as i16
+            })
+            .collect();
+        let crossings = smooth
+            .windows(2)
+            .filter(|w| w[0].signum() != w[1].signum())
+            .count();
+        let (d4s, d5s) = (d4_varint_cost(&smooth), d5_varint_cost(&smooth));
+        eprintln!(
+            "G15 smooth fixture: n={n} crossings={crossings} D2={} D3={} D4={d4s} D5={d5s}",
+            d2_varint_cost(&smooth),
+            d3_varint_cost(&smooth),
+        );
+        assert!(
+            d5s <= d4s + 4,
+            "the synthetic smooth ladder must stay FLAT (D5 <= D4 + 4 B; D4={d4s} D5={d5s}). \
+             If D5 now wins on synthetic smooth, UPDATE the contract — promotion claims live \
+             ONLY on real recordings (science.md 8.20)"
+        );
+    }
+
+    /// G15 exactness: the D5 stream inverts by pure accumulation
+    /// (same-length convention: r5[0] = r4[0], no wire-style seed-row
+    /// degeneracy on the research side — the wire's k-boundary law is the
+    /// wire's own accumulate order, unchanged here).
+    #[test]
+    fn g15_d5_roundtrip_exact() {
+        let x = [10i16, 12, 20, 22, 21, 19, 18, 17, 5, 9].to_vec();
+        let r5 = d5_stream(&x);
+        assert_eq!(r5.len(), predictor_residuals(&x, MODEL_D2).len());
+        // accumulate D5 → D4 → D3 → D2 (three first-difference steps)
+        let mut acc = r5;
+        for _ in 0..3 {
+            let mut up = vec![acc[0]];
+            for k in 1..acc.len() {
+                up.push(up[k - 1] + acc[k]);
+            }
+            acc = up;
+        }
+        // x from the D2 stream: x0 = r2[0]; x1 = x0 + r2[1];
+        // x[k] = 2x[k-1] - x[k-2] + r2[k]
+        let mut back = vec![acc[0], acc[0] + acc[1]];
+        for k in 2..acc.len() {
+            back.push(2 * back[k - 1] - back[k - 2] + acc[k]);
+        }
+        assert_eq!(
+            back,
+            x.iter().map(|&v| v as i64).collect::<Vec<_>>(),
+            "D5 must re-accumulate exactly"
+        );
+    }
+
+    /// G15 — the ladder's definitive probe on the REAL recordings: D5 vs D4
+    /// (raw varint billing, identical framing, both partitions). Decision
+    /// law: D4 is IN the shipped portfolio, so D5 ≥ D4 on held-out windows
+    /// closes the ladder with no portfolio sweep owed; a WIN opens the
+    /// complete-v6-portfolio gate instead.
+    #[test]
+    #[ignore] // corpus-gated: scripts/g12_fetch.sh
+    fn g15_d5_vs_d4_ladder_probe() {
+        type PhaseFn = fn(usize) -> std::ops::Range<usize>;
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/g12");
+        let mut rows = String::new();
+        let mut pins: Vec<(&str, &str, usize, f64)> = Vec::new();
+        let names = ["emotional_piano.wav", "park_birds.wav", "park_river.wav"];
+        let phases: [(&str, PhaseFn); 2] = [
+            ("eval", |wins| wins / 2..wins),
+            ("decide", |wins| 0..wins / 2),
+        ];
+        for (phase, range_of) in phases {
+            for name in names {
+                let data = std::fs::read(format!("{dir}/{name}")).expect("g12_fetch");
+                let (_rate, streams) = crate::parse_wav_multichannel(&data).expect("parse");
+                for (ch, y) in streams.iter().enumerate() {
+                    let wins = (y.len() / 4096).min(200);
+                    let (mut d4, mut d5) = (0usize, 0usize);
+                    for w in range_of(wins) {
+                        let seg = &y[w * 4096..(w + 1) * 4096];
+                        d4 += d4_varint_cost(seg);
+                        d5 += d5_varint_cost(seg);
+                    }
+                    let pct = 100.0 * (d4 as i64 - d5 as i64) as f64 / d4.max(1) as f64;
+                    rows.push_str(&format!(
+                        "G15 {phase} {name} ch{ch}: D4={d4} D5={d5} D4-minus-D5={:+} B ({pct:+.2}% of D4)\n",
+                        d4 as i64 - d5 as i64
+                    ));
+                    pins.push((phase, name, ch, pct));
+                }
+            }
+        }
+        eprintln!("{rows}");
+        // Pins (the measured contract; each failure message carries the flip clause)
+        for (phase, name, ch, pct) in &pins {
+            if name.contains("piano") {
+                assert!(
+                    *pct >= 0.3,
+                    "G15 piano held-out [{phase} ch{ch}]: D5 must continue the ladder \
+                     (>= +0.3% vs D4; {pct:.2}% measured). If this now LOSES, the ladder \
+                     closes at D4 — UPDATE the contract + science.md 8.20"
+                );
+            } else {
+                assert!(
+                    *pct <= -5.0,
+                    "G15 {name} [{phase} ch{ch}]: D5 must lose its own class \
+                     (<= -5% vs D4; {pct:.2}% measured). If this now WINS, UPDATE \
+                     the contract + science.md 8.20"
+                );
+            }
+        }
+    }
+
+    /// G15-B — the portfolio gate the piano WIN opened: L_D5 vs the
+    /// COMPLETE v6 portfolio (every kind × param, incl. D4, payload_len
+    /// billing) per held-out window, both partitions. Promotion candidate
+    /// only if D5 beats the complete portfolio on piano; the other classes'
+    /// rows confirm the class law for the record.
+    #[test]
+    #[ignore] // corpus-gated: scripts/g12_fetch.sh
+    fn g15_d5_vs_complete_v6_portfolio() {
+        type PhaseFn = fn(usize) -> std::ops::Range<usize>;
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/g12");
+        let mut rows = String::new();
+        let mut pins: Vec<(&str, &str, usize, f64)> = Vec::new();
+        let names = ["emotional_piano.wav", "park_birds.wav", "park_river.wav"];
+        let phases: [(&str, PhaseFn); 2] = [
+            ("eval", |wins| wins / 2..wins),
+            ("decide", |wins| 0..wins / 2),
+        ];
+        for (phase, range_of) in phases {
+            for name in names {
+                let data = std::fs::read(format!("{dir}/{name}")).expect("g12_fetch");
+                let (_rate, streams) = crate::parse_wav_multichannel(&data).expect("parse");
+                for (ch, y) in streams.iter().enumerate() {
+                    let wins = (y.len() / 4096).min(200);
+                    let (mut port, mut d5) = (0usize, 0usize);
+                    for w in range_of(wins) {
+                        let seg = &y[w * 4096..(w + 1) * 4096];
+                        // complete v6 portfolio: every kind x param
+                        let kinds_dense = [
+                            crate::MODEL_RAW,
+                            crate::MODEL_D1,
+                            MODEL_D2,
+                            crate::MODEL_D3,
+                            crate::MODEL_D4,
+                        ];
+                        let mut best = usize::MAX;
+                        for &k in &kinds_dense {
+                            best = best.min(crate::payload_len(k, 0, seg).unwrap_or(usize::MAX));
+                        }
+                        for lag in 2..=96usize {
+                            best = best.min(
+                                crate::payload_len(crate::MODEL_PERIOD, lag, seg)
+                                    .unwrap_or(usize::MAX),
+                            );
+                        }
+                        for variant in 0..11usize {
+                            best = best.min(
+                                crate::payload_len(crate::MODEL_OSC, variant, seg)
+                                    .unwrap_or(usize::MAX),
+                            );
+                        }
+                        for op in 0..16usize {
+                            best = best.min(
+                                crate::payload_len(crate::MODEL_OP, op, seg).unwrap_or(usize::MAX),
+                            );
+                        }
+                        port += best;
+                        d5 += d5_varint_cost(seg);
+                    }
+                    let pct = 100.0 * (port as i64 - d5 as i64) as f64 / port.max(1) as f64;
+                    rows.push_str(&format!(
+                        "G15-GATE {phase} {name} ch{ch}: portfolio={port} D5={d5} portfolio-minus-D5={:+} B ({pct:+.2}% of portfolio)\n",
+                        port as i64 - d5 as i64
+                    ));
+                    pins.push((phase, name, ch, pct));
+                }
+            }
+        }
+        eprintln!("{rows}");
+        // Pins (the measured contract; each failure message carries the flip clause)
+        for (phase, name, ch, pct) in &pins {
+            if name.contains("piano") {
+                assert!(
+                    *pct >= 0.5,
+                    "G15-GATE piano [{phase} ch{ch}]: the candidate gate must stay PASSED \
+                     (D5 >= +0.5% over the complete v6 portfolio; {pct:.2}% measured). If this \
+                     now LOSES, the candidate is dead — UPDATE the pin + science.md 8.20"
+                );
+            } else if name.contains("birds") {
+                assert!(
+                    *pct <= -15.0,
+                    "G15-GATE birds [{phase} ch{ch}]: the class must keep REJECTING \
+                     (D5 <= -15% vs portfolio; {pct:.2}% measured). If this now WINS, UPDATE \
+                     the pin + science.md 8.20"
+                );
+            } else {
+                assert!(
+                    *pct <= -20.0,
+                    "G15-GATE river [{phase} ch{ch}]: the class must keep REJECTING \
+                     (D5 <= -20% vs portfolio; {pct:.2}% measured). If this now WINS, UPDATE \
+                     the pin + science.md 8.20"
+                );
+            }
+        }
     }
 }

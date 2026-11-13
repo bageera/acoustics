@@ -7,6 +7,24 @@ Format based on Keep a Changelog; versioning is SemVer.
 
 ### Measured (research only)
 
+- **G15 — the D-ladder's endgame measured: D5 marginally continues on piano**
+  (`src/g13.rs` `g15_*`, research-only): first difference of the D4 stream,
+  same-length convention, raw varint billing, identical framing. Decision
+  law: D4 is IN the shipped portfolio, so D5 ≥ D4 on held-out windows closes
+  the ladder with no sweep owed; a WIN opens the complete-v6-portfolio gate.
+  Result: piano WIN (+0.46/+0.58% decide, +0.83/+0.64% eval vs D4) → the
+  gate ran and **PASSED on both partitions: D5 beats the ENTIRE v6 portfolio
+  +0.83/+0.94% (decide) and +1.00/+1.19% (eval)**; birds −18.2..−20.1% and
+  river −26.2..−26.6% reject (class law holds); noise +94 B; the synthetic
+  smooth ladder stays FLAT (+1 B per order — promotion claims live ONLY on
+  real recordings). The continuation win shrinks ~4× per order on the same
+  class (D3 +17.8/+14.2 → D4 +3.1-4.0 → D5 +0.8-1.2, portfolio-relative,
+  piano): the ladder's returns are bounded by the varint coder (G11's
+  integral floor), not by stream structure. Candidate = D5 as a 9th kind
+  under adaptive selection; WIRE PROMOTION = USER's call — recommendation:
+  bundle with the next wire change (G10/G11 mask/coder work) or stand down
+  at ~1%. science.md §8.20.
+
 ## [0.10.0] — 2026-10-29
 
 > Published to crates.io; verified by registry read-back (max 0.10.0) + a
