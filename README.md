@@ -302,8 +302,11 @@ for it. The known open targets, each cited to the measurement that named it:
 - **The residual backend itself.** The D-ladder measured its own endgame
   (G15: the continuation win shrinks ~4× per order — bounded by the varint
   coder, not stream structure), and G11-A put a number on that ceiling: long
-  streams sit 16–16.5% above H0, the integral varint floor. Only a
-  fractional-bit backend reaches it (gated, unbuilt).
+  streams sit 16–16.5% above H0, the integral varint floor. MEASURED DONE
+  (G17, §8.22): on v7 the gap holds (18–28%), and Golomb-Rice recovers most
+  of it with full billing — R1 −77..95% of the order-0 gap, R2 33–98% of the
+  lag-1-conditional gap; the piano payload translates 721,261 → 558,997 B.
+  Wire promotion = USER's call.
 - **The correction-stream context coder.** G5-E measured a D1-context on the
   cascade's deltas at −18.6% (4,489 vs 5,518 B) and justified it as a wire
   milestone; the v5–v7 promotions shipped first. Measured, not yet shipped.

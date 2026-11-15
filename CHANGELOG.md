@@ -3,6 +3,20 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
+## [Unreleased]
+
+### Measured (research only)
+
+- **G17 — fractional-bit residual backend** (`src/g17.rs`, §8.22; wire v7
+  untouched): G17-A re-runs the G11 audit against v7-era residuals — the gap
+  survives the D3/D4/D5 promotions (residual bytes 18–28% above H0 on every
+  corpus class). G17-B's Golomb-Rice arms (R1 global-k, R2 block-adaptive k;
+  R0 = the real varint writer; selector + per-block k varints fully billed;
+  every arm decoded to the EXACT input stream in-test) WIN on all nine
+  measured classes: R1 −77..95% of the order-0 gap with one parameter
+  varint; R2 33–98% of the lag-1-conditional gap. Piano whole payload
+  721,261 → 558,997 B (51.1% → 39.6% of PCM). Wire promotion = USER's call.
+
 ## [0.11.1] — 2026-11-15
 
 > The security and validation patch: a hardened decode contract (controlled

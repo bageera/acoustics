@@ -1114,6 +1114,60 @@ Measured (corpus-gated, held-out partitions):
 Release condition PASSES on both authorized targets. v7 shipped as
 manifold-acoustics 0.11.0.
 
+### 8.22 G17 — the fractional-bit residual backend (audit + Golomb-Rice arms; research-only, wire v7 untouched)
+
+The roadmap's question after G15: the D-ladder's continuation win "shrinks
+~4× per order — bounded by the varint coder, not stream structure". If the
+backend is the bound, a fractional-bit coder should recover the G11 gap that
+the integral format cannot. G17 keeps every predictor, mask section, and
+field byte-identical and recodes ONLY the delta stream; the promotion
+inequality is `L_new + L_params + L_signaling < L_shipping` — selector bytes
+and per-block/best-k parameter varints are billed in full
+(`src/g17.rs`; `g17a_v7_residual_entropy_audit` + `g17b_rice_backend_arms`).
+
+**G17-A — the v7-era audit** (H0 of the EXACT symbol sequences the
+production writer codes vs the real serialized residual span):
+
+| class (kind) | res span | H0 | gap vs H0 |
+|---|---|---|---|
+| piano ch0/ch1 (8, D5) | 721,244 / 730,407 B | 566,149 / 578,416 B (6.42 / 6.56 b/sym) | 155,095 / 151,991 B (~21%) |
+| birds ch0 (6, D3) / ch1 (2, D2) | 22,613,966 / 22,449,492 B | 18,609,285 / 17,959,845 B (~6.9 b/sym) | 4,004,681 / 4,489,647 B (~18–20%) |
+| river ch0 (2) / ch1 (1) | 35,361,551 / 36,886,032 B | 26,033,843 / 26,715,833 B (8.41 / 8.63 b/sym) | 9,327,708 / 10,170,199 B (~26–28%) |
+| speech1 (1) / speech3 (1) | 55,693 / 437,318 B | 44,460 / 367,035 B | 11,233 / 70,283 B |
+| speech2 (3, PERIOD-2) | 103,558 B (+7,515 mask) | 82,455 B (11.38 b/sym; Hcond 3.81) | 21,103 B |
+
+The G11-era estimate survives wire v7's D3/D4/D5 selections unchanged: the
+residual bytes still sit 18–28% above their order-0 entropy floor.
+
+**G17-B — the backend arms** (R0 = the real varint writer; R1 = global-k
+Golomb-Rice with bounded escape; R2 = block-adaptive k over 256-symbol
+blocks; every arm decoded back to the EXACT input symbol stream inside the
+test):
+
+| class (kind) | R0 | R1 (k) | R2 | verdict |
+|---|---|---|---|---|
+| piano ch0/ch1 (8) | 721,244 / 730,407 | 578,991 (5) / 589,579 (5) | 558,980 / 567,032 | RICE WINS (R2): −162,264 / −163,375 B — frame 721,244→558,980 |
+| birds ch0 (6) / ch1 (2) | 22,613,966 / 22,449,492 | 18,729,166 (5) / 18,193,117 (5) | 18,433,984 / 17,532,775 | RICE WINS (R2): −18.5% / −21.9% |
+| river ch0 (2) / ch1 (1) | 35,361,551 / 36,886,032 | 26,511,133 (6) / 27,016,500 (7) | 26,461,776 / 27,066,543 | RICE WINS (R2/R1): −25.2% / −26.7% |
+| speech1 (1) / speech2 (3) / speech3 (1) | 55,693 / 103,558 / 437,318 | 46,979 (7) / 87,003 (10) / 371,617 (5) | 42,866 / 78,562 / 366,852 | RICE WINS (R2): −23.0% / −22.5% / −16.1% |
+
+Honest accounting per arm: R1 (static, one k) sits above its H0 floor on
+every class — its savings are 77–95% of the order-0 gap (piano 92%, river
+95%). R2 (block-adaptive k) rides the lag-1 structure the varints ignore:
+its fair bound is Hcond, and its savings are 33–98% of that gap (birds/river
+~93–98%, piano 93%, speech3 85%, speech2 33% — the PERIOD-2 stream's
+temporal structure dominates, and escapes recover only part of it). The
+piano's whole payload translates 721,261 → 558,997 B (51.1% → 39.6% of PCM).
+
+Honest verdict: POSITIVE on every measured class — the first backend-level
+result in the record. The wire decision (a new payload VERSION carrying a
+backend selector) = USER's call, under the standing promotion gate.
+Mechanism pin: `g17_rice_wins_on_small_magnitude_distribution` (Rice < varint
+on a small-magnitude distribution, R1 ≥ H0 floor); roundtrip + metric==len
+pinned per k, per arm (`g17_rice_roundtrip_and_metric`). R3 (static range)
+and R4 (rANS) remain queued; R5 (per-class adaptive backend selection) only
+after a promotion authorization.
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

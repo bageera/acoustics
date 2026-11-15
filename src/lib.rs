@@ -65,6 +65,12 @@ pub(crate) mod g13;
 #[cfg(test)]
 pub(crate) mod g16;
 
+/// G17 research (fractional-bit residual backend: the v7 residual-entropy
+/// audit and the Golomb-Rice arms R0/R1/R2) — research-only, corpus-gated;
+/// no wire changes.
+#[cfg(test)]
+pub(crate) mod g17;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;
