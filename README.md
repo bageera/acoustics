@@ -310,6 +310,14 @@ for it. The known open targets, each cited to the measurement that named it:
 - **The correction-stream context coder.** G5-E measured a D1-context on the
   cascade's deltas at −18.6% (4,489 vs 5,518 B) and justified it as a wire
   milestone; the v5–v7 promotions shipped first. Measured, not yet shipped.
+- **Spatial/inter-channel redundancy.** MEASURED PART (G18, §8.23): the
+  reversible mid/side-difference transforms ran the serialized arms on the
+  stereo corpora — river-class C2 (L + R−L) WINS −8.6% whole-stereo with
+  every byte billed; piano/birds keep independent channels (the 17-bit
+  side's parity plane eats their margins). Selectable-positive; C4/C5
+  (predictive arms) conditional, G18-C's geometry×Rice factorial queued —
+  whether the −22.5% backend share and the −8.6% geometry share compose is
+  the next measurement, not an assumption.
 - **Cascade stage optimization.** The greedy per-stage fit measured TIES on
   the two-part fixture (P6); joint or re-anchored stage optimization is the
   named follow-up.

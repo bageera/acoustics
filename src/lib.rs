@@ -71,6 +71,13 @@ pub(crate) mod g16;
 #[cfg(test)]
 pub(crate) mod g17;
 
+/// G18 research (inter-channel geometry: the stereo-dependence audit and
+/// the reversible channel transform arms C0-C3) — research-only,
+/// corpus-gated; no wire changes. C4/C5 conditional on C1-C3 evidence;
+/// the G18-C backend-interaction factorial is queued.
+#[cfg(test)]
+pub(crate) mod g18;
+
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
 pub mod feas;

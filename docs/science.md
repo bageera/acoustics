@@ -1166,7 +1166,71 @@ Mechanism pin: `g17_rice_wins_on_small_magnitude_distribution` (Rice < varint
 on a small-magnitude distribution, R1 ≥ H0 floor); roundtrip + metric==len
 pinned per k, per arm (`g17_rice_roundtrip_and_metric`). R3 (static range)
 and R4 (rANS) remain queued; R5 (per-class adaptive backend selection) only
-after a promotion authorization.
+after a promotion authorization. G17's production disposition (USER, 0.11.1
+cycle): R1/R2 approved candidates for the eventual promotion through G21;
+R3/R4 DEFERRED — they must now compete against Rice, not the old varint
+baseline; backend-aware model selection (G21) is REQUIRED and must
+re-evaluate every production predictor under R0/R1/R2 before any new
+equations are invented. Wire v8 reserved for a combined gate.
+
+### 8.23 G18 — inter-channel geometry (audit + reversible transform arms C0-C3; research-only, wire v7 untouched)
+
+The roadmap's second hypothesis: simultaneous channels carry redundancy the
+temporal difference ladder cannot see. The exact reversible lifting (the
+roadmap's formulas, zero clipping — the side carries the full 17-bit range):
+
+    S = L - R;  A = S div 2 (floor);  B = S - 2A (parity)
+    M = R + A   (= floor((L+R)/2), 16-bit exact)
+    inverse:    R = M - A;  L = M + A + B   — bit-exact, no information lost
+
+The side's parity plane bills at its CONSERVATIVE packed floor (1 bit/sample)
+— entropy-coding it could only be cheaper, so a win against this billing is
+robust. Every stream bills a COMPLETE encode() payload (header included);
+transform arms add a 1-B selector (`src/g18.rs`;
+`g18a_stereo_dependence_audit` + `g18b_channel_transform_arms`).
+
+**G18-A — the dependence audit** (hash-locked stereo classes; speech2 is
+mono and reports skipped):
+
+| class (rate) | Pearson | best \|r\| (lag) | MI (64-bin) | H0 b/sym: L+R vs M+A+1(plane) | max\|S\| / H0(S) |
+|---|---|---|---|---|---|
+| piano (44.1k) | 0.5612 | 0.5665 (+2) | 0.000 | 14.08+14.15 vs 13.98+14.06+1.00 (+0.81) | 20,655 / 14.06 |
+| birds (48k) | 0.6710 | 0.6710 (+0) | 0.000 | 9.20+9.20 vs 9.07+8.87+1.00 (+0.55) | 2,090 / 8.87 |
+| river (48k) | 0.6941 | 0.6941 (+0) | 0.000 | 10.12+9.90 vs 9.91+9.58+1.00 (+0.46) | 6,500 / 9.57 |
+
+Order-0's own verdict: the parity plane's +1 b/sample outweighs every
+class's H0 saving — H0 predicted all three transforms LOSE.
+
+**G18-B — the serialized arms** (the decisive instrument; every decoded
+payload reconstructs bit-exactly inside the run):
+
+| class | C0 independent | C1 mid/side | C2 L+(R-L) | C3 R+(L-R) | verdict |
+|---|---|---|---|---|---|
+| piano (44.1k) | 1,451,685 | 1,516,941 | 1,519,629 | 1,528,832 | independent holds (+4.5%) |
+| birds (48k) | 45,063,494 | 46,610,404 | 47,011,370 | 46,846,787 | independent holds (+3.4%) |
+| river (48k) | 72,247,619 | 66,196,668 | **66,003,381** | 67,527,705 | **C2 WINS: −6,244,238 B (−8.6% whole-stereo)** |
+
+Honest attribution of the surprise: H0 said all three lose; the serialized
+portfolio said river WINS. The mechanism is the DIFF channel's temporal
+structure — (R−L) of a shared water bed is a slowly-varying ambience stream
+whose D-transform codes it far below its order-0 entropy, while L itself
+re-bills unchanged. The audit's honest lesson lands in the record too:
+H0 is the WRONG instrument for a transform whose product streams are
+temporally correlated — the serialized arm (the meter-is-the-serializer
+rule) is what decided it. The 64-bin plug-in MI read 0.000 on all three
+classes (coarse bins + estimator bias); a finer dependence estimator is
+queued with C4.
+
+Verdict: MIXED, selectable-positive — river-class −8.6% whole-stereo with
+every byte billed; piano/birds keep independent channels (the parity plane
++ extra stream header eat their narrower H0 margins). Per-stereo-payload
+transform selection is the natural promotion shape; C4 (integer cross-
+channel prediction) and C5 (delay-compensated prediction) stay CONDITIONAL
+on C1-C3 evidence per the authorization, and the G18-C backend-interaction
+factorial (geometry x Rice, complete stereo payloads) is queued — the
+roadmap's 22.5% G17 piano share measured vs the geometry arms' −8.6% river
+share are candidate complements, unproven together (that is G18-C's
+experiment).
 
 ## 9. Standing principles (the honest-results contract)
 

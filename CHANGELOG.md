@@ -7,6 +7,17 @@ Format based on Keep a Changelog; versioning is SemVer.
 
 ### Measured (research only)
 
+- **G18 — inter-channel geometry** (`src/g18.rs`, §8.23; wire v7 untouched):
+  the exact reversible lifting S=L−R / M=R+floor(S/2) implemented
+  portfolio-safe (the 17-bit side = 16-bit half + a parity plane billed at
+  its packed floor); G18-A audits Pearson/lag/MI/H0 on the stereo corpora;
+  G18-B bills C0 (independent) vs C1 (mid/side) vs C2 (L+R−L) vs C3
+  (R+L−R) as complete stereo payloads — **river-class C2 WINS −6,244,238 B
+  (−8.6%)**; piano/birds keep independent channels. Verdict MIXED,
+  selectable-positive; the H0 audit predicted all three transforms lose —
+  the serialized meter (correctly) overruled it: the diff channel's
+  temporal structure is the win, an Hcond-domain effect. C4/C5 conditional;
+  G18-C's geometry×Rice factorial queued.
 - **G17 — fractional-bit residual backend** (`src/g17.rs`, §8.22; wire v7
   untouched): G17-A re-runs the G11 audit against v7-era residuals — the gap
   survives the D3/D4/D5 promotions (residual bytes 18–28% above H0 on every
