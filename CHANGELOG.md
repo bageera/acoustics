@@ -3,6 +3,94 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
+## [Unreleased]
+
+### Added
+
+- **Makefile** (`Makefile`): development-dependency entry points — `make` runs
+  the release-gate stage-1 trio (fmt --check + clippy -D warnings + release
+  tests --locked); `check-deps`/`deps` verify the toolchain (cargo, rustfmt,
+  clippy components) and fetch the small in-repo g5f corpus; `corpus` and
+  `test-corpus` wire the hash-locked g12 corpus (~262 MB) behind the 11
+  corpus-gated tests; `roundtrip` mirrors gate stage 1's exact-PCM CLI check;
+  `gate V=x.y.z` / `publish V=x.y.z` delegate to scripts/release-gate.sh
+  (publish sets ACOUSTICS_RELEASE=1). Development tooling only — the wire
+  format, crate API, and test suite are untouched.
+
+### Fixed
+
+- **v6-era billing underflow (validation correction, published API)**:
+  `period_len_v6` / `osc_len_v6` / `arm_costs` computed the frozen-v6 mask
+  cost as `segmented/adaptive - fixed_words*4` in usize — whenever a mask
+  segment's RLE beat its fixed words (the G10 winning case, e.g. the PERIOD-2
+  speech anchor), the subtrahend was negative: release builds produced the
+  right number only via double wraparound, and any checked build (debug
+  tests, or a consumer calling the published API in debug) panicked
+  "subtract with overflow". Both fns now fold additively in i64
+  (v6 = v7 + fixed - adaptive, provably >= 0); the recorded G15/G16 numbers
+  are unchanged.
+- **Decoder hardening (validation correction — payloads outside the
+  encoder's reachable set that previously panicked or aborted in checked
+  builds now return clean errors; no legitimately encoded payload rejects.
+  Audit of every producer/consumer below.)** —
+  - D1..D5/PERIOD accumulation sites use checked i64 arithmetic: a residual
+    varint decoding to i64::MIN (the maximal 10-byte varint) previously
+    overflowed `p + r` under overflow-checks.
+  - OSC varint coefficient paths (grid-2 f0/f1, f3 stages) reject (|C|, |R|)
+    outside the encoder's candidate clamp (|CW| <= 2q-1, 0 <= R <= 2q-1);
+    a hostile 2^62-varint C previously overflowed the recurrence's i64
+    products (f3 previously checked only R < 0).
+  - OSC f2 fields reject outside the writer's reachable sets —
+    env_sel in {0,8,9,10}, stride_sel in 0..=6, 1 <= p <= q, phi0 < q,
+    0 <= rq <= Q15 — removing the `1u64 << env_sel` shift overflows, the
+    `(phi0 + local*p)` u64 multiply/add overflow, and the amp*cos*env i64
+    product overflow (rq > Q15 would EXPAND the envelope, growing env
+    unboundedly before the amplitude guard).
+  - OP arms validate the coded base/y streams as i16 (the writer's type for
+    every arm) and combine residuals with checked arithmetic.
+  - Decoder ceiling: header count > 2^27 samples (134 M ≈ 50 min @ 44.1 kHz
+    — above any stream encode() can produce for a real recording, which
+    must be in RAM first) rejects cleanly BEFORE the count-sized buffer
+    reservations; the worst claim inside the ceiling is ~1 GB (8 B/sample
+    for the PERIOD prev-stream / OSC f3 accumulator), not terabytes.
+  - Mask RLE zero-run extends clamp to the declared table length before
+    allocating (a ~30-byte payload can no longer request a 4 TB zero-fill);
+    data runs were already bounded (4 payload bytes per word).
+  - Allocation propagation: every count-derived decoder buffer (samples,
+    PERIOD prev-stream, OSC f1/f2 reconstructions, f3 accumulator, OP
+    base/y) reserves through try_reserve_exact — an allocator failure
+    returns the typed `decoder buffer allocation declined (resource budget)`
+    error instead of aborting the process. The two shared synthesis helpers
+    (osc0_generate / osc2_synth) keep their internal ceiling-bounded
+    (≤ 1 GiB) allocations; failure there aborts — the documented resource
+    abort boundary (SECURITY.md's resource-exhaustion section: ceilings,
+    propagation, and the boundary are now recorded there, distinct from the
+    malformed-input/never-panic guarantees).
+  - Documentation: the ceiling restricts the maximum ACCEPTED payload —
+    otherwise wire-valid historical claims above 2^27 samples that a larger
+    0.11.0-era host could materialize now reject on 0.11.1 (recorded as a
+    validation correction). Configurable decode-resource budgets are
+    recorded as future work, deliberately not this patch's public API.
+  - Audit (producer/consumer sweep for every reachable-set mirror above —
+    why no legitimately encoded payload rejects):
+    - D-stream residuals are differences of i16-derived streams; the 5th
+      difference is bounded by |x|·32 ≈ 2^20 in magnitude, accumulations
+      stay ≥ 2^21 from i64 overflow.
+    - OSC coefficients: the serializer emits ONLY osc_coeff_candidates' 
+      clamped candidates (grid 2's exact (1,1)/(0,1)/(-1,1) set included).
+    - f2 fields: osc2_fit_candidates writes env_sels ⊆ {0,8,9,10} (the
+      coarse arm ⊆ {0,9}), stride_sels ∈ 0..=6, p = max(1, round(q/period)
+      + jitter) ≤ q/2 + 1 ≤ q, phi0 = rem_euclid(q) < q, and rq =
+      round(r·Q15) with r ≤ 0.999999 → rq < Q15.
+    - OP base/y: the loop arm's base is a slice of the input i16s; echo and
+      scale clamp their y stream to i16 in the plan before serialization.
+    - RLE runs: the writer's runs partition the table exactly, so zero-runs
+      never exceed the declared length; the recorded G10/G16 corpus rows
+      decode unchanged under the new clamps.
+    - Ceiling: every committed corpus stream (g5f speech, g12
+      piano/birds/river) is far below 2^27 samples; encode() cannot produce
+      a payload for a stream it does not already hold in RAM.
+
 ## [0.11.0] — 2026-11-13
 
 > The combined release candidate: MODEL_D5 (kind 8) + the adaptive mask

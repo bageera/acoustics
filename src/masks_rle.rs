@@ -155,6 +155,13 @@ pub(crate) fn read_mask_rle(
                 *pos += 4;
             }
         } else {
+            // a zero run extends the table WITHOUT consuming payload bytes —
+            // a hostile varint (cnt up to 2^64) would otherwise try to build
+            // a 4*cnt-byte table before the word_count post-check below;
+            // every run must stay inside the declared table
+            if masks.len().checked_add(cnt).is_none_or(|n| n > word_count) {
+                return Err("mask zero-run exceeds the declared table length".into());
+            }
             masks.extend(std::iter::repeat_n(0u32, cnt));
         }
         zero_next = !zero_next; // runs alternate: zero-run, data-run, ...

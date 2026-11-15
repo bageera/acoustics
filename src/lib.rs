@@ -104,6 +104,30 @@ const ERR_BAD_MAGIC: &str = "bad magic (not an ACOUSTICS payload)";
 const ERR_TRUNCATED: &str = "truncated payload";
 pub(crate) const ERR_EMPTY: &str = "no samples";
 const ERR_RANGE: &str = "decoded sample out of i16 range";
+const ERR_OVERFLOW: &str = "residual accumulation overflows i64";
+const ERR_ALLOCATION: &str = "decoder buffer allocation declined (resource budget)";
+
+/// Count-derived buffer reservation with PROPAGATED failure: a Vec sized
+/// from the header count (already ceiling-checked <= 2^27) is reserved
+/// up-front with try_reserve_exact, so an allocator failure surfaces as the
+/// decoder's typed error instead of the process abort that
+/// Vec::with_capacity would trigger. The shared synthesis helpers
+/// (osc0_generate / osc2_synth) still allocate internally — their
+/// count-bounded size and the abort boundary are documented in
+/// SECURITY.md's resource model.
+pub(crate) fn reserve_for<T>(buf: &mut Vec<T>, n: usize) -> Result<(), String> {
+    buf.try_reserve_exact(n)
+        .map_err(|_| ERR_ALLOCATION.to_string())
+}
+
+/// Decoder sample-count ceiling (1<<27 = ~134 M samples ≈ 50 min @ 44.1 kHz,
+/// far above every corpus stream the engine encodes and above any stream
+/// encode() can produce for a real recording, which must be in RAM first).
+/// A hostile header varint (count up to 2^64) errors cleanly here instead of
+/// reserving terabytes in the buffers below (the OSC f3 accumulator costs
+/// 8 B/sample, the PERIOD prev-stream 8 B/sample, so 1<<27 bounds the worst
+/// claim at ~1 GB).
+const MAX_DECODE_SAMPLES: usize = 1 << 27;
 
 // ---------- integer coding ----------
 
@@ -163,6 +187,18 @@ pub(crate) fn header_len(count: usize) -> usize {
 
 fn i16_from_i64(v: i64) -> Result<i16, String> {
     i16::try_from(v).map_err(|_| ERR_RANGE.into())
+}
+
+/// Checked +-fold for decoder accumulations: residual varints decode to the
+/// full +-2^63 range, so plain `a + b - c` panics under overflow-checks on a
+/// hostile stream (i64::MIN + anything negative). Every accumulation site
+/// folds through here and errors instead. The coefficient products passed in
+/// as terms stay safe: sm_* are i16-ranged decoded samples, |sm| <= 65535, so
+/// |k*sm| <= 262142 for k <= 4.
+fn i64_sum_checked(terms: &[i64]) -> Result<i64, String> {
+    terms.iter().try_fold(0i64, |acc, &t| {
+        acc.checked_add(t).ok_or_else(|| ERR_OVERFLOW.to_string())
+    })
 }
 
 // ---------- WAV I/O (mono 16-bit PCM only) ----------
@@ -1368,6 +1404,12 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
     if count == 0 {
         return Err(ERR_EMPTY.into());
     }
+    // the hostile-count ceiling: every buffer below sizes itself from count
+    if count > MAX_DECODE_SAMPLES {
+        return Err(format!(
+            "sample count {count} exceeds the decoder ceiling ({MAX_DECODE_SAMPLES})"
+        ));
+    }
     let mut param = 0usize;
     if kind == MODEL_PERIOD || kind == MODEL_OSC || kind == MODEL_OP {
         param = read_varint(payload, &mut pos)? as usize;
@@ -1381,13 +1423,15 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
     if kind == MODEL_OP && (param >= OP_ARM_COUNT || count < 2) {
         return Err("invalid OP arm or count".into());
     }
-    let mut samples: Vec<i16> = Vec::with_capacity(count);
+    let mut samples: Vec<i16> = Vec::new();
+    reserve_for(&mut samples, count)?;
     match kind {
         MODEL_PERIOD => {
             let lag = param;
             let mask_len = (count - lag).div_ceil(32);
             let masks = read_mask_adaptive(payload, &mut pos, mask_len)?;
-            let mut prev: Vec<i64> = Vec::with_capacity(count);
+            let mut prev: Vec<i64> = Vec::new();
+            reserve_for(&mut prev, count)?;
             for _ in 0..lag {
                 let z = read_varint(payload, &mut pos)?;
                 let v = i16_from_i64(zigzag_decode(z))?;
@@ -1398,7 +1442,7 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
                 let used = masks[(i - lag) / 32] & (1 << ((i - lag) % 32)) != 0;
                 let value = if used {
                     let z = read_varint(payload, &mut pos)?;
-                    zigzag_decode(z) + prev[i - lag]
+                    i64_sum_checked(&[zigzag_decode(z), prev[i - lag]])?
                 } else {
                     prev[i - lag]
                 };
@@ -1414,7 +1458,7 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
             for _ in 0..count {
                 let r = zigzag_decode(read_varint(payload, &mut pos)?);
                 let v = match last {
-                    Some(p) => p + r,
+                    Some(p) => i64_sum_checked(&[p, r])?,
                     None => r,
                 };
                 samples.push(i16_from_i64(v)?);
@@ -1428,8 +1472,10 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
                 let r = zigzag_decode(read_varint(payload, &mut pos)?);
                 let v = match (s1, s2) {
                     (None, _) => r,
-                    (Some(p1), None) => p1 + r,
-                    (Some(p1), Some(p2)) => p1 + (p1 - p2) + r,
+                    // p1 - p2 is safe: both are i16-ranged decoded samples,
+                    // |p1 - p2| <= 65536; the +r accumulation is checked
+                    (Some(p1), None) => i64_sum_checked(&[p1, r])?,
+                    (Some(p1), Some(p2)) => i64_sum_checked(&[p1, p1 - p2, r])?,
                 };
                 samples.push(i16_from_i64(v)?);
                 s2 = s1;
@@ -1446,9 +1492,9 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
                 let r = zigzag_decode(read_varint(payload, &mut pos)?);
                 let v = match idx {
                     0 => r,
-                    1 => 2 * sm1 + r,
-                    2 => r + 3 * sm1 - 2 * sm2,
-                    _ => r + 3 * sm1 - 3 * sm2 + sm3,
+                    1 => i64_sum_checked(&[2 * sm1, r])?,
+                    2 => i64_sum_checked(&[r, 3 * sm1, -(2 * sm2)])?,
+                    _ => i64_sum_checked(&[r, 3 * sm1, -(3 * sm2), sm3])?,
                 };
                 sm3 = sm2;
                 sm2 = sm1;
@@ -1467,13 +1513,13 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
                 let r = zigzag_decode(read_varint(payload, &mut pos)?);
                 let v = match idx {
                     0 => r,
-                    1 => r + 3 * sm1,
-                    2 => r + 4 * sm1 - 4 * sm2,
+                    1 => i64_sum_checked(&[r, 3 * sm1])?,
+                    2 => i64_sum_checked(&[r, 4 * sm1, -(4 * sm2)])?,
                     // k=3's row inherits the D3 stream's degenerate k=2 case:
                     // r4[3] = x3 - 4x2 + 6x1 - 3x0 (the x0 coefficient is −3,
                     // NOT the textbook −1 — pinned by the 4-sample roundtrip)
-                    3 => r + 4 * sm1 - 6 * sm2 + 3 * sm3,
-                    _ => r + 4 * sm1 - 6 * sm2 + 4 * sm3 - sm4,
+                    3 => i64_sum_checked(&[r, 4 * sm1, -(6 * sm2), 3 * sm3])?,
+                    _ => i64_sum_checked(&[r, 4 * sm1, -(6 * sm2), 4 * sm3, -sm4])?,
                 };
                 sm4 = sm3;
                 sm3 = sm2;
@@ -1493,16 +1539,18 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
             let mut r4: Option<i64> = None;
             for idx in 0..count {
                 let r = zigzag_decode(read_varint(payload, &mut pos)?);
+                // the r4 accumulation itself can overflow: r4 carries full
+                // varint magnitudes, not i16-ranged decoded samples
                 let r4v = match r4 {
                     None => r,
-                    Some(p) => p + r,
+                    Some(p) => p.checked_add(r).ok_or(ERR_OVERFLOW)?,
                 };
                 let v = match idx {
                     0 => r4v,
-                    1 => r4v + 3 * sm1,
-                    2 => r4v + 4 * sm1 - 4 * sm2,
-                    3 => r4v + 4 * sm1 - 6 * sm2 + 3 * sm3,
-                    _ => r4v + 4 * sm1 - 6 * sm2 + 4 * sm3 - sm4,
+                    1 => i64_sum_checked(&[r4v, 3 * sm1])?,
+                    2 => i64_sum_checked(&[r4v, 4 * sm1, -(4 * sm2)])?,
+                    3 => i64_sum_checked(&[r4v, 4 * sm1, -(6 * sm2), 3 * sm3])?,
+                    _ => i64_sum_checked(&[r4v, 4 * sm1, -(6 * sm2), 4 * sm3, -sm4])?,
                 };
                 r4 = Some(r4v);
                 sm4 = sm3;
@@ -1542,6 +1590,21 @@ pub(crate) fn decode(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> {
     Ok((sample_rate, samples, Model { kind, param }))
 }
 
+/// Varint-coefficient reachable-set mirror: the encoder only ever emits
+/// candidates inside osc_coeff_candidates' clamp — |cwq| <= 2q-1 and
+/// 0 <= r2q <= 2q-1 (grid 2's exact set (1,1)/(0,1)/(-1,1) sits inside the
+/// same bounds at q = 1). A varint decodes to the full +-2^63 range, so a
+/// hostile field is both out-of-reachable-set and an i64 product overflow in
+/// the recurrence (|y| <= OSC_ENVELOPE_MAX, and y * 2^62 overflows i64).
+/// The i32 grid-0/1 fields are bounded by their wire width (<= 2^31) and
+/// the per-step envelope guard — products <= 2^51 — so they need no check.
+fn osc_coefs_in_range(cwq: i64, r2q: i64, q: i64) -> Result<(), String> {
+    if cwq > 2 * q - 1 || cwq < -(2 * q - 1) || r2q < 0 || r2q > 2 * q - 1 {
+        return Err("OSC coefficients outside the encoder's lattice range".into());
+    }
+    Ok(())
+}
+
 /// Decode an OSC body: read fields, masks, then deltas; reconstruct exactly.
 fn decode_osc(
     payload: &[u8],
@@ -1570,6 +1633,7 @@ fn decode_osc(
                 y1 = i16::from_le_bytes(hdr[2..4].try_into().unwrap()) as i64;
                 cwq = zigzag_decode(read_varint(payload, pos)?);
                 r2q = zigzag_decode(read_varint(payload, pos)?);
+                osc_coefs_in_range(cwq, r2q, q)?;
             } else {
                 let hdr: [u8; 12] = payload
                     .get(*pos..*pos + 12)
@@ -1594,6 +1658,7 @@ fn decode_osc(
             if grid == 2 {
                 cwq = zigzag_decode(read_varint(payload, pos)?);
                 r2q = zigzag_decode(read_varint(payload, pos)?);
+                osc_coefs_in_range(cwq, r2q, q)?;
             } else {
                 let hdr: [u8; 8] = payload
                     .get(*pos..*pos + 8)
@@ -1621,9 +1686,9 @@ fn decode_osc(
             for _ in 0..k {
                 let c = zigzag_decode(read_varint(payload, pos)?);
                 let r = zigzag_decode(read_varint(payload, pos)?);
-                if r < 0 {
-                    return Err("negative OSC cascade R".into());
-                }
+                // supersedes the old `r < 0` check: r2q < 0 is inside the
+                // same rejection, plus the hostile-C overflow above
+                osc_coefs_in_range(c, r, q)?;
                 st.push((0, 0, c, r));
             }
             cwq = 0;
@@ -1688,7 +1753,8 @@ fn decode_osc(
         }
         1 => {
             let masks = &masks[0];
-            let mut rec = Vec::with_capacity(count);
+            let mut rec: Vec<i64> = Vec::new();
+            reserve_for(&mut rec, count)?;
             let (mut p1, mut p2) = (0i64, 0i64);
             for i in 0..count {
                 let pred = if i < 2 {
@@ -1720,7 +1786,9 @@ fn decode_osc(
             // residual cascade replay: sum over stages of each stage's closed
             // reconstruction (its rec reconstructs its level exactly, and the
             // level ladder is decoder-computable), output = sum of recs == x.
-            let mut acc = vec![0i64; count];
+            let mut acc: Vec<i64> = Vec::new();
+            reserve_for(&mut acc, count)?;
+            acc.resize(count, 0i64);
             for (s_i, &(_, _, cstage, rstage)) in stages.iter().enumerate() {
                 let mv = &masks[s_i];
                 let (mut p1, mut p2) = (0i64, 0i64);
@@ -1758,9 +1826,26 @@ fn decode_osc(
             if qf == 0 || qf > 4096 || 4096 % qf != 0 {
                 return Err("invalid OSC lattice size".into());
             }
+            // f2 field reachable-set mirror (the writer's sets: F2_ENV_SELS /
+            // F2_STRIDE_SELS, osc2_fit_candidates' p/phi0/rq). Beyond the
+            // semantics, these remove the decoder-side shift overflow
+            // (`1u64 << env_sel/stride_sel+5` in osc2_synth), the
+            // `(phi0 + local*p)` u64 multiply/add overflow, and the
+            // amp*cos*env i64 product overflow (rq > Q15 would EXPAND the
+            // envelope instead of damping it — env is unbounded then).
+            if !F2_ENV_SELS.contains(&env_sel) || !F2_STRIDE_SELS.contains(&stride_sel) {
+                return Err("invalid OSC f2 envelope/anchor selector".into());
+            }
+            if p == 0 || p > qf || phi0 >= qf {
+                return Err("invalid OSC f2 lattice pitch/phase".into());
+            }
+            if !(0..=OSC_Q15).contains(&rq) {
+                return Err("OSC f2 envelope ratio outside [0, 1]".into());
+            }
             let shift = f2_stride_shift(stride_sel);
             let pred = osc2_synth(amp, rq, p, qf, phi0, env_sel, shift, count);
-            let mut rec = Vec::with_capacity(count);
+            let mut rec: Vec<i64> = Vec::new();
+            reserve_for(&mut rec, count)?;
             for (i, &pv) in pred.iter().enumerate() {
                 let coded = masks[0][i / 32] & (1 << (i % 32)) != 0;
                 let d = if coded {
@@ -1995,9 +2080,13 @@ fn decode_op(
             if loop_l == 0 || loop_l >= count {
                 return Err("invalid OP loop length".into());
             }
-            let mut base = Vec::with_capacity(loop_l);
+            let mut base: Vec<i64> = Vec::new();
+            reserve_for(&mut base, loop_l)?;
             for _ in 0..loop_l {
-                base.push(zigzag_decode(read_varint(payload, pos)?));
+                // the writer emits base as i16 (loop_plan's `base: Vec<i16>`)
+                // — mirror the reachable set, which also bounds y + d
+                let v = zigzag_decode(read_varint(payload, pos)?);
+                base.push(i16_from_i64(v)? as i64);
             }
             let masks = read_mask_rle(payload, pos, count.div_ceil(32))?;
             for i in 0..count {
@@ -2007,7 +2096,7 @@ fn decode_op(
                 } else {
                     0
                 };
-                samples.push(i16_from_i64(y + d)?);
+                samples.push(i16_from_i64(i64_sum_checked(&[y, d])?)?);
             }
         }
         10..=15 => {
@@ -2028,9 +2117,13 @@ fn decode_op(
             if ylen != count {
                 return Err("OP y-stream length mismatch".into());
             }
-            let mut y = Vec::with_capacity(ylen);
+            let mut y: Vec<i64> = Vec::new();
+            reserve_for(&mut y, ylen)?;
             for _ in 0..ylen {
-                y.push(zigzag_decode(read_varint(payload, pos)?));
+                // the writer emits y as i16 (echo_plan/scale_plan clamp the
+                // wire stream) — mirror the reachable set
+                let v = zigzag_decode(read_varint(payload, pos)?);
+                y.push(i16_from_i64(v)? as i64);
             }
             let masks = read_mask_rle(payload, pos, count.div_ceil(32))?;
             let mut di = 0usize;
@@ -2053,7 +2146,7 @@ fn decode_op(
                 } else {
                     0
                 };
-                samples.push(i16_from_i64(v + d)?);
+                samples.push(i16_from_i64(i64_sum_checked(&[v, d])?)?);
             }
             let _ = di;
         }
@@ -2232,15 +2325,29 @@ pub mod research {
 }
 
 /// v6-era PERIOD billing (fixed 4-B mask words) — the four-arm's Arm-A basis.
-/// Same plan, so the number is the frozen production bytes by subtraction.
+/// Same plan, so the number is the frozen production bytes. Computed
+/// ADDITIVELY: v6 = v7 - adaptive + fixed, folded in i64. The previous
+/// `v7 - (adaptive - fixed)` form underflowed exactly when the segment's RLE
+/// beat the fixed words (adaptive = min(fixed, rle)+1 < fixed — the G10
+/// winning case): wrapped to the right value only in release builds, panicked
+/// "subtract with overflow" in debug/overflow-checked ones. adaptive is
+/// min(fixed, rle)+1 <= fixed+1, so `fixed - adaptive >= -1` and the result
+/// is never negative.
 pub fn period_len_v6(samples: &[i16], lag: usize) -> Option<usize> {
     let v7 = payload_len(MODEL_PERIOD, lag, samples)?;
     let (_residuals, masks) = period_plan(samples, lag)?;
-    let bonus = mask_adaptive_cost(&masks) - masks.len() * 4;
-    Some(v7 - bonus)
+    let fixed = (masks.len() * 4) as i64;
+    let adaptive = mask_adaptive_cost(&masks) as i64;
+    let v7n = i64::try_from(v7).ok()?;
+    usize::try_from(v7n + fixed - adaptive).ok()
 }
 
 /// v6-era OSC billing (fixed 4-B mask words, no selector) — Arm-A basis.
+/// Additive per segment, same reason as period_len_v6: `segmented - fixed`
+/// underflows when any segment's RLE win beats its fixed words (negative in
+/// the old `plan.cost - bonus` subtrahend form). Per segment,
+/// adaptive = min(4*seg_words, seg_rle)+1 <= 4*seg_words+1, so the summed
+/// i64 `cost + fixed_total - segmented` is >= cost - stages >= 0.
 pub fn osc_len_v6(samples: &[i16], variant: usize) -> Option<usize> {
     let plan = osc_plan(samples, variant)?;
     let segs: Vec<usize> = if plan.family == 3 {
@@ -2248,8 +2355,10 @@ pub fn osc_len_v6(samples: &[i16], variant: usize) -> Option<usize> {
     } else {
         vec![plan.masks.len()]
     };
-    let bonus = mask_segmented_cost(&plan.masks, &segs) - plan.masks.len() * 4;
-    Some(plan.cost - bonus)
+    let fixed_total = (plan.masks.len() * 4) as i64;
+    let segmented = mask_segmented_cost(&plan.masks, &segs) as i64;
+    let cost = i64::try_from(plan.cost).ok()?;
+    usize::try_from(cost + fixed_total - segmented).ok()
 }
 
 /// The v7 four-arm's per-stream costs (A, B, C, D) — actual serialized byte
@@ -2298,6 +2407,7 @@ pub fn arm_costs(samples: &[i16]) -> (usize, usize, usize, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::masks_rle::{MASK_SEL_FIXED, MASK_SEL_RLE};
     use crate::research;
 
     fn roundtrip(rate: u32, samples: &[i16]) -> Model {
@@ -2476,6 +2586,337 @@ mod tests {
         p3.extend_from_slice(&100i32.to_le_bytes()); // amp
         p3.extend_from_slice(&(OSC_Q15 as i32).to_le_bytes()); // rq
         assert!(decode_payload(&p3).is_err(), "truncated f2 body rejected");
+    }
+
+    // ================= v0.11 hostile-payload hardening battery =================
+    // Every guard below pins a shape that previously PANICKED (debug /
+    // overflow-checked builds) or aborted the allocator instead of erroring.
+    // The wire is untouched: each body here is outside the encoder's
+    // reachable set, so no legitimately encoded payload rejects.
+
+    /// A 10-byte varint encoding u64::MAX: read_varint keeps only bit 63 of
+    /// the 10th byte, so this is the maximal decodable varint, and
+    /// zigzag_decode(u64::MAX) == i64::MIN — the hostile residual value.
+    fn i64min_varint() -> Vec<u8> {
+        let mut v = vec![0xFFu8; 9];
+        v.push(0x01);
+        v
+    }
+
+    /// D1..D5: the accumulation `p + r` with r = i64::MIN and p < 0
+    /// underflowed i64 (debug panic). Every dense kind must now ERROR with
+    /// the overflow message, and at the accumulation (not the i16 check).
+    #[test]
+    fn hostile_residual_i64min_rejected_all_dense_kinds() {
+        for kind in [MODEL_D1, MODEL_D2, MODEL_D3, MODEL_D4, MODEL_D5] {
+            let mut p = Vec::new();
+            p.extend_from_slice(MAGIC);
+            p.push(VERSION);
+            p.push(kind);
+            p.extend_from_slice(&44100u32.to_le_bytes());
+            write_varint(&mut p, 2); // count 2: legal seed + the hostile burst
+            write_varint(&mut p, zigzag_encode(-1000)); // r0: i16-safe
+            p.extend_from_slice(&i64min_varint()); // r1 = i64::MIN
+            let err = decode_payload(&p)
+                .expect_err("i64::MIN residual must reject (checked accumulation)");
+            assert_eq!(err, ERR_OVERFLOW, "kind {kind}");
+        }
+    }
+
+    /// PERIOD: the tail combine `zigzag_decode(z) + prev[i-lag]` overflowed
+    /// for a full-varint tail residual against a negative seed.
+    #[test]
+    fn hostile_period_tail_i64min_rejected() {
+        let mut p = Vec::new();
+        p.extend_from_slice(MAGIC);
+        p.push(VERSION);
+        p.push(MODEL_PERIOD);
+        p.extend_from_slice(&44100u32.to_le_bytes());
+        write_varint(&mut p, 3); // count
+        write_varint(&mut p, 2); // lag
+        p.push(MASK_SEL_FIXED); // adaptive mask: fixed words
+        p.extend_from_slice(&1u32.to_le_bytes()); // 1 tail word, bit 0 = set
+        write_varint(&mut p, zigzag_encode(-1000)); // seed x0
+        write_varint(&mut p, zigzag_encode(-1000)); // seed x1
+        p.extend_from_slice(&i64min_varint()); // tail residual = i64::MIN
+        let err = decode_payload(&p).expect_err("PERIOD tail overflow must reject");
+        assert_eq!(err, ERR_OVERFLOW);
+    }
+
+    /// Hand-built OSC grid-2 body (f0/f1): y0/y1 + varint (C, R) + an all-zero
+    /// RLE mask section covering the plan's count-2 (f0) / count (f1) WORDS.
+    fn osc_grid2_body(variant: usize, cwq: i64, r2q: i64) -> Vec<u8> {
+        let count = 40usize;
+        let words = if osc_variant_family(variant) == 0 {
+            (count - 2).div_ceil(32)
+        } else {
+            count.div_ceil(32)
+        };
+        let mut p = Vec::new();
+        p.extend_from_slice(MAGIC);
+        p.push(VERSION);
+        p.push(MODEL_OSC);
+        p.extend_from_slice(&44100u32.to_le_bytes());
+        write_varint(&mut p, count as u64);
+        write_varint(&mut p, variant as u64);
+        // only f0 carries the y0/y1 pair; f1's grid-2 body is (C, R) varints
+        if osc_variant_family(variant) == 0 {
+            p.extend_from_slice(&100i16.to_le_bytes()); // y0
+            p.extend_from_slice(&50i16.to_le_bytes()); // y1
+        }
+        write_varint(&mut p, zigzag_encode(cwq));
+        write_varint(&mut p, zigzag_encode(r2q));
+        p.push(MASK_SEL_RLE);
+        write_varint(&mut p, 1); // one run
+        write_varint(&mut p, words as u64); // zero-run covers the table
+        p
+    }
+
+    /// OSC varint-coefficient paths sit inside the encoder's candidate clamp:
+    /// |cwq| <= 2q-1 and 0 <= r2q <= 2q-1 (grid 2: the (1,1)/(0,1)/(-1,1)
+    /// set). A hostile 2^62-varint C previously overflowed the recurrence's
+    /// i64 products under overflow-checks; f3 kept only `r < 0`.
+    #[test]
+    fn hostile_osc_varint_coefs_rejected() {
+        // f0 grid 2: C = 100000 nowhere near {-1, 0, 1}
+        let p = osc_grid2_body(6, 100_000, 1);
+        assert_eq!(
+            decode_payload(&p).unwrap_err(),
+            "OSC coefficients outside the encoder's lattice range"
+        );
+        // f1 grid 2: negative R (the old check rejected it; now one same
+        // reachable-set rejection covers both coefficients)
+        let p = osc_grid2_body(7, 1, -5);
+        assert_eq!(
+            decode_payload(&p).unwrap_err(),
+            "OSC coefficients outside the encoder's lattice range"
+        );
+        // CONTROLS: the exact integer set at both variants still decodes
+        // (the y values oscillate within i16; masks all-zero)
+        let p = osc_grid2_body(6, 1, 1);
+        assert!(decode_payload(&p).is_ok(), "grid-2 (1,1) must still decode");
+        let p = osc_grid2_body(7, -1, 1);
+        assert!(
+            decode_payload(&p).is_ok(),
+            "grid-2 (-1,1) must still decode"
+        );
+
+        // f3 cascade (variant 8 = Q15 grid): stage C beyond 2*Q15-1 rejects
+        let mut p = Vec::new();
+        p.extend_from_slice(MAGIC);
+        p.push(VERSION);
+        p.push(MODEL_OSC);
+        p.extend_from_slice(&44100u32.to_le_bytes());
+        write_varint(&mut p, 40); // count
+        write_varint(&mut p, 8); // variant 8 (f3/Q15)
+        write_varint(&mut p, 1); // one stage
+        write_varint(&mut p, zigzag_encode(70_000)); // C outside the clamp
+        write_varint(&mut p, zigzag_encode(10_000)); // R inside
+        p.push(MASK_SEL_RLE);
+        write_varint(&mut p, 1);
+        write_varint(&mut p, 2); // one stage's table (40 positions = 2 words)
+        assert_eq!(
+            decode_payload(&p).unwrap_err(),
+            "OSC coefficients outside the encoder's lattice range"
+        );
+        // control: in-clamp stage coefficients still decode (zero corrections)
+        let mut ctl = Vec::new();
+        ctl.extend_from_slice(MAGIC);
+        ctl.push(VERSION);
+        ctl.push(MODEL_OSC);
+        ctl.extend_from_slice(&44100u32.to_le_bytes());
+        write_varint(&mut ctl, 40);
+        write_varint(&mut ctl, 8);
+        write_varint(&mut ctl, 1);
+        write_varint(&mut ctl, zigzag_encode(30_000)); // C inside the clamp
+        write_varint(&mut ctl, zigzag_encode(10_000)); // R inside
+        ctl.push(MASK_SEL_RLE);
+        write_varint(&mut ctl, 1);
+        write_varint(&mut ctl, 2); // 40 positions = 2 words
+        assert!(decode_payload(&ctl).is_ok(), "in-clamp f3 must decode");
+    }
+
+    /// Hand-built OSC f2 body: amp/rq i32 fields + varint p/q/phi0 +
+    /// env_sel/stride_sel + an all-zero RLE mask section (2 words for 64
+    /// positions), no deltas.
+    fn osc_f2_body(
+        env_sel: u64,
+        stride_sel: u64,
+        pitch: u64,
+        q: u64,
+        phi0: u64,
+        rq: i32,
+    ) -> Vec<u8> {
+        let mut p = Vec::new();
+        p.extend_from_slice(MAGIC);
+        p.push(VERSION);
+        p.push(MODEL_OSC);
+        p.extend_from_slice(&44100u32.to_le_bytes());
+        write_varint(&mut p, 64); // count
+        write_varint(&mut p, 4); // variant 4 (f2 coarse)
+        p.extend_from_slice(&12000i32.to_le_bytes()); // amp
+        p.extend_from_slice(&rq.to_le_bytes());
+        write_varint(&mut p, pitch);
+        write_varint(&mut p, q);
+        write_varint(&mut p, phi0);
+        write_varint(&mut p, env_sel);
+        write_varint(&mut p, stride_sel);
+        p.push(MASK_SEL_RLE);
+        write_varint(&mut p, 1);
+        write_varint(&mut p, 2); // zero-run covers both table words
+        p
+    }
+
+    /// f2's writer-reachable sets: env_sel in {0,8,9,10}, stride_sel in
+    /// 0..=6, 1 <= p <= q, phi0 < q, 0 <= rq <= Q15. `1u64 << env_sel` /
+    /// `<< stride_sel+5` shifted-overflowed (debug panic) and rq > Q15 let
+    /// the envelope EXPAND (env was then unbounded) before the amplitude
+    /// guard; p/phi0 overflows hit `(phi0 + local*p) % q` in u64.
+    #[test]
+    fn hostile_f2_fields_rejected() {
+        // CONTROL: the writer-reachable body decodes
+        let control = osc_f2_body(0, 0, 8, 512, 11, OSC_Q15 as i32 / 2);
+        assert!(
+            decode_payload(&control).is_ok(),
+            "reachable f2 body decodes"
+        );
+        // hostile selectors
+        assert!(decode_payload(&osc_f2_body(5, 0, 8, 512, 11, OSC_Q15 as i32 / 2)).is_err());
+        assert!(decode_payload(&osc_f2_body(0, 7, 8, 512, 11, OSC_Q15 as i32 / 2)).is_err());
+        // hostile pitch/phase
+        assert!(decode_payload(&osc_f2_body(0, 0, 0, 512, 11, OSC_Q15 as i32 / 2)).is_err());
+        assert!(decode_payload(&osc_f2_body(0, 0, 600, 512, 11, OSC_Q15 as i32 / 2)).is_err());
+        assert!(decode_payload(&osc_f2_body(0, 0, 8, 512, 512, OSC_Q15 as i32 / 2)).is_err());
+        // hostile envelope ratio (expanding / negative)
+        assert!(decode_payload(&osc_f2_body(0, 0, 8, 512, 11, OSC_Q15 as i32 + 1)).is_err());
+        assert!(decode_payload(&osc_f2_body(0, 0, 8, 512, 11, -1)).is_err());
+        // boundary values stay legal: env 8/9/10, stride 6, rq == Q15
+        assert!(decode_payload(&osc_f2_body(8, 6, 8, 512, 11, OSC_Q15 as i32)).is_ok());
+        assert!(decode_payload(&osc_f2_body(10, 6, 8, 512, 11, OSC_Q15 as i32)).is_ok());
+    }
+
+    /// A mask RLE zero-run used to extend the table WITHOUT consuming
+    /// payload bytes: `repeat_n(0, 2^32)` allocated 16 GB before the
+    /// word-count post-check. The clamp makes it a clean rejection.
+    #[test]
+    fn hostile_mask_zero_run_bounded() {
+        let mut p = Vec::new();
+        p.extend_from_slice(MAGIC);
+        p.push(VERSION);
+        p.push(MODEL_PERIOD);
+        p.extend_from_slice(&44100u32.to_le_bytes());
+        write_varint(&mut p, 4096); // count
+        write_varint(&mut p, 2); // lag -> 128 mask words expected
+        p.push(MASK_SEL_RLE);
+        write_varint(&mut p, 1); // one run
+        write_varint(&mut p, 1u64 << 32); // zero-run of 2^32 words
+        write_varint(&mut p, zigzag_encode(-1000)); // seeds (never reached)
+        write_varint(&mut p, zigzag_encode(-1000));
+        let err = decode_payload(&p).expect_err("zero-run beyond the table must reject");
+        assert_eq!(err, "mask zero-run exceeds the declared table length");
+    }
+
+    /// The decoder ceiling: a hostile header varint (count = 2^40) must
+    /// error cleanly BEFORE any count-sized buffer reservation.
+    #[test]
+    fn hostile_sample_count_ceiling() {
+        let mut p = Vec::new();
+        p.extend_from_slice(MAGIC);
+        p.push(VERSION);
+        p.push(MODEL_D2);
+        p.extend_from_slice(&44100u32.to_le_bytes());
+        write_varint(&mut p, 1u64 << 40); // count = 1,099,511,627,776
+        p.extend_from_slice(&[0x00; 8]); // junk body (never reached)
+        let err = decode_payload(&p).expect_err("giant count must reject");
+        assert_eq!(
+            err,
+            format!(
+                "sample count {} exceeds the decoder ceiling ({MAX_DECODE_SAMPLES})",
+                1u64 << 40
+            )
+        );
+        // PERIOD reaches the same ceiling through the param-carrying header
+        let mut p = Vec::new();
+        p.extend_from_slice(MAGIC);
+        p.push(VERSION);
+        p.push(MODEL_PERIOD);
+        p.extend_from_slice(&44100u32.to_le_bytes());
+        write_varint(&mut p, 1u64 << 40);
+        p.extend_from_slice(&[0x00; 8]);
+        assert!(decode_payload(&p)
+            .expect_err("giant PERIOD count must reject")
+            .contains("exceeds the decoder ceiling"));
+    }
+
+    /// Finding-1 pin: the v6-era billing fns must NOT underflow when a mask
+    /// segment's RLE beats its fixed words (the G10 winning case), and the
+    /// additive identity v6 = v7 + fixed - adaptive holds exactly.
+    #[test]
+    fn v6_billing_dense_masks_no_underflow() {
+        // a lag-2-periodic signal with sparse bumps: most tail residuals are
+        // zero (long zero runs), a few set words — the RLE beat fixed words
+        let n = 4096usize;
+        let mut samples = vec![0i16; n];
+        samples[0] = 5000;
+        samples[1] = -5000;
+        for i in 2..n {
+            samples[i] = if i % 512 == 0 { 5000 } else { samples[i - 2] };
+        }
+        for lag in [2usize, 7, 64] {
+            let (_residuals, masks) = period_plan(&samples, lag).expect("plan");
+            let v7 = payload_len(MODEL_PERIOD, lag, &samples).expect("v7");
+            let v6 = period_len_v6(&samples, lag).expect("v6");
+            let expected = v7 as i64 + (masks.len() * 4) as i64 - mask_adaptive_cost(&masks) as i64;
+            assert_eq!(v6 as i64, expected, "lag {lag}: additive identity");
+            // fixed - adaptive >= -1: v6 can only undercut v7 by the selector
+            assert!(v6 >= v7 - 1, "lag {lag}: v6 floor");
+        }
+        // the lag-2 window is the RLE-WINS case (mostly-zero words): exactly
+        // the shape whose `segmented - fixed` subtrahend went negative and
+        // panicked debug builds before the additive fix
+        let lag = 2usize;
+        let (_residuals, masks) = period_plan(&samples, lag).expect("plan");
+        assert!(
+            mask_adaptive_cost(&masks) < masks.len() * 4,
+            "lag-2 fixture must have rle < fixed (the panic case)"
+        );
+        // lag 7 sits dense against this signal (fixed wins, +1 selector):
+        // the opposite side of the identity, billed through the same fn
+        let lag = 7usize;
+        let (_residuals, masks) = period_plan(&samples, lag).expect("plan");
+        assert!(
+            mask_adaptive_cost(&masks) >= masks.len() * 4,
+            "lag-7 fixture's fixed words must not lose to its RLE"
+        );
+        // arm_costs (which sweeps every lag/variant through both billing fns)
+        // completes without overflow on the same fixture
+        let (a, b, c, d) = crate::arm_costs(&samples);
+        assert!(a > 0 && b > 0 && c > 0 && d > 0, "all four arms bill");
+
+        // the P5-style period-4 integer-dynamics fixture (C=1, R=1): f0's
+        // (1,1) candidate reproduces it EXACTLY from the coded seed, so the
+        // mask table is ALL-ZERO — segmented ~3 B vs fixed 4*W B; exactly
+        // the case whose old `segmented - fixed` subtrahend went negative
+        // (debug panic) before the additive fix
+        let mut y = vec![1000i64, 437i64];
+        for i in 2..3000 {
+            y.push(y[i - 1] - y[i - 2]); // the exact integer recurrence
+        }
+        let osc_samples: Vec<i16> = y
+            .iter()
+            .map(|&v| v.clamp(i16::MIN as i64, i16::MAX as i64) as i16)
+            .collect();
+        let plan = osc_plan(&osc_samples, 6).expect("plan");
+        assert!(plan.masks.iter().all(|&m| m == 0), "exact fit: zero masks");
+        let v6 = osc_len_v6(&osc_samples, 6).expect("osc v6");
+        let segs = vec![plan.masks.len()];
+        let expected = plan.cost as i64 + (plan.masks.len() * 4) as i64
+            - mask_segmented_cost(&plan.masks, &segs) as i64;
+        assert_eq!(v6 as i64, expected, "osc additive identity");
+        assert!(
+            mask_segmented_cost(&plan.masks, &segs) < plan.masks.len() * 4,
+            "osc fixture must have rle < fixed (the panic case)"
+        );
     }
 
     #[test]

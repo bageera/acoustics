@@ -159,8 +159,13 @@ efficiency); no single score is computed anywhere.
   a test asserts the selection metric equals actual serialized size for every candidate
   family, grid, and PERIOD lag.
 - **Total decode** — malformed, truncated, or hostile payloads are rejected with an
-  error, never a panic and never invented samples (varint overrun/u64 overflow, unstable
-  or envelope-escaping dynamics, invalid lattice geometry, `Vec::with_capacity` DoS guards).
+  error, never a panic and never invented samples (varint overrun/u64 overflow,
+  residual accumulation overflow, unstable or envelope-escaping dynamics, invalid
+  lattice geometry, every OSC/OP coefficient and selector field validated against the
+  encoder's reachable set, a 2^27-sample decoder ceiling that restricts the maximum
+  ACCEPTED payload — including otherwise wire-valid claims above it — and mask-run
+  allocation caps; count-derived buffers propagate allocation failure as an error
+  rather than aborting. Resource model: SECURITY.md).
 
 Sample-rate metadata rides in the payload header (no companion file).
 
@@ -178,6 +183,22 @@ cargo test -- --nocapture p1_phase                          # print research mea
 ```
 
 Input: mono, 16-bit PCM WAV. Stereo, 8-bit, and exotic formats are rejected with an error.
+
+### Makefile
+
+`make help` lists targets. The crate itself has zero Cargo dependencies; the
+Makefile manages the development prerequisites
+(toolchain + rustfmt/clippy components, python3, and the two corpora):
+
+```
+make                    # fmt --check + clippy + release tests (gate stage 1)
+make deps               # toolchain check + the small in-repo g5f corpus
+make test-corpus        # the corpus-gated tests (fetches g12, ~262 MB, first run)
+make roundtrip          # release CLI encode/decode must be PCM byte-identical
+make gate V=0.11.0      # scripts/release-gate.sh (V must equal Cargo.toml)
+make publish V=0.11.0   # gate + crates.io publish (sets ACOUSTICS_RELEASE=1)
+make fmt-check clippy audit clean   # or run each goal individually
+```
 
 ### Library
 
