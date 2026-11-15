@@ -1232,6 +1232,55 @@ roadmap's 22.5% G17 piano share measured vs the geometry arms' −8.6% river
 share are candidate complements, unproven together (that is G18-C's
 experiment).
 
+### 8.24 G18-C/G18-P — the geometry x Rice factorial and the parity-plane diagnostic (research-only; wire v7 untouched)
+
+The central question: do the three validated mechanisms — temporal
+prediction, fractional-bit backends, inter-channel geometry — remove
+distinct information, or do they compete for the same bytes? The factorial
+runs all twelve cells (4 geometries x 3 backends), two passes, on complete
+stereo payloads (`src/g18.rs::g18c_geometry_rice_factorial`; every Rice arm
+decodes EXACTLY inside the run; pass 2 lets the dense ladder compete per
+stream under each backend — documented scope: OSC/OP/PERIOD keep their
+varint-era selection).
+
+| class | A indep/varint (production) | B indep/Rice | C best-geometry/varint | D best-geometry/Rice | S_rice | S_geom | I = B+C-A-D |
+|---|---|---|---|---|---|---|---|
+| piano | 1,451,685 | 1,126,048 | 1,428,740 (ms) | 1,126,048 (indep) | −325,637 (−22.4%) | −22,945 (−1.6%) | −22,945: **overlapping** |
+| birds | 45,063,494 | 35,966,797 | 43,916,975 (ms) | 35,966,797 (indep) | −9,096,697 (−20.2%) | −1,146,519 (−2.5%) | −1,146,519: **overlapping** |
+| river | 72,247,619 | 53,478,314 | 62,907,381 (c2) | 52,807,433 (c2) | −18,769,305 (−26.0%) | −9,340,238 (−12.9%) | −8,669,357: **overlapping** |
+
+Matrix (12 cells, complete payloads, selector + parity-plane bytes billed):
+
+| class | geometry | varint | R1 | R2 | portfolio | joint (pass 2) |
+|---|---|---|---|---|---|---|
+| piano | indep / ms / c2 / c3 | 1,451,685 / 1,428,740 / 1,431,429 / 1,440,632 | 1,168,606 / 1,168,405 / 1,190,275 / 1,200,819 | 1,126,048 / 1,141,848 / 1,162,722 / 1,170,836 | 1,126,048 / 1,141,848 / 1,162,722 / 1,170,836 | identical (no dense reordering) |
+| birds | indep / ms / c2 / c3 | 45,063,494 / 43,916,975 / 44,317,942 / 44,153,359 | 36,922,321 / 37,236,892 / 37,967,345 / 37,431,467 | 35,966,797 / 36,510,771 / 37,478,174 / 36,577,107 | 35,966,797 / 36,510,771 / 37,478,174 / 36,577,107 | identical |
+| river | indep / ms / c2 / c3 | 72,247,619 / 63,100,667 / 62,907,381 / 64,431,705 | 53,527,671 / 53,028,479 / 52,945,597 / 53,450,834 | 53,528,357 / 52,885,636 / 52,807,433 / 53,412,144 | 53,478,314 / 52,885,636 / 52,807,433 / 53,362,101 | identical |
+
+Verdict: the mechanisms **substantially overlap** — under Rice, the
+varint-era geometry wins evaporate on piano and birds entirely (D reverts to
+independent) and shrink on river to a residual +670,881 B beyond rice-alone
+(the c2 diff geometry keeps a small edge: 52,807,433 vs 53,478,314). The
+COMBINED totals remain the record's best: piano 1,451,685 → 1,126,048
+(−22.4%), birds −20.2%, river 72,247,619 → 52,807,433 (−26.9% from
+production). The user's I-based reading holds: I < 0 = partial overlap, and
+the overlaps are the varint-era geometry savings Rice re-captures through
+the side channel's own small magnitudes. Pass 2 reordered nothing (the
+dense ranking is backend-stable at this scope) — the deeper G21
+enumeration stays justified only where this scope could not look (the
+OSC/OP/PERIOD candidates).
+
+**G18-P — the parity-plane diagnostic** (`g18p_parity_diagnostic`): the
+17-bit side's parity plane is UNIFORMLY RANDOM on every class — ones
+fraction 49.996–50.003%, mean run 2.0, max run ≤ 25, lag-1 conditional
+entropy H(B|B−1) = 1.000 b exactly. Bit-RLE costs ~4x the packed plane
+(river: 12,382,611 vs 3,096,000 B). The roadmap's close-the-investigation
+condition is met: bit packing retained; the 17-bit side's parity is the
+irreducible cost of the mid/side coordinate system under an i16-native
+portfolio. For promotion, the packed plane must be serialized and decoded
+in-wire (padding + length signaling billed) — the research billing already
+charges it conservatively at exactly that cost.
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

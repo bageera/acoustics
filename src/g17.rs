@@ -37,6 +37,45 @@ const G17_K_MAX_R1: u8 = 20; // global-k sweep bound (R1)
 const G17_K_MAX_R2: u8 = 19; // per-block sweep bound (R2)
 const G17_BLOCK: usize = 256; // R2 block size (8 mask words)
 
+// ---------- shared corpus machinery (used by g18/g21 too) ----------
+
+/// The production writer's RESIDUAL SPAN (bytes) + the symbol stream it
+/// codes, for the selected kind — the accounting G11-A used, extended to
+/// the dense D3/D4/D5 kinds and the v7-era adaptive mask costs.
+pub(crate) fn ledger_span(model: crate::Model, rate: u32, y: &[i16]) -> (usize, usize, Vec<u64>) {
+    match model.kind {
+        crate::MODEL_D1 | crate::MODEL_D2 | crate::MODEL_D3 | crate::MODEL_D4 | crate::MODEL_D5 => {
+            let r = crate::predictor_residuals(y, model.kind);
+            let actual = r
+                .iter()
+                .map(|&v| crate::varint_len(crate::zigzag_encode(v)))
+                .sum();
+            let symbols = r.iter().map(|&v| crate::zigzag_encode(v)).collect();
+            (actual, 0, symbols)
+        }
+        crate::MODEL_PERIOD => {
+            let lag = model.param;
+            let mut symbols = Vec::new();
+            let mut bytes = 0usize;
+            for i in lag..y.len() {
+                let d = y[i] as i64 - y[i - lag] as i64;
+                if d != 0 {
+                    symbols.push(crate::zigzag_encode(d));
+                    bytes += crate::varint_len(crate::zigzag_encode(d));
+                }
+            }
+            let mask_bytes =
+                crate::mask_adaptive_cost(&crate::period_plan(y, lag).expect("period plan").1);
+            (bytes, mask_bytes, symbols)
+        }
+        crate::MODEL_OSC => {
+            let (actual_res, mask_res, symbols) = crate::g9::ledger_bits(model, rate, y);
+            (actual_res, mask_res, symbols)
+        }
+        _ => (0, 0, Vec::new()),
+    }
+}
+
 // ---------- the bit-stream writer ----------
 
 struct RiceBits {
@@ -270,7 +309,6 @@ fn cost_of_r2(stream: &RiceBits, nblocks: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{predictor_residuals, MODEL_D1, MODEL_D2, MODEL_D3, MODEL_D4, MODEL_D5};
 
     // ---------- roundtrip / metric invariants ----------
 
@@ -343,43 +381,6 @@ mod tests {
     }
 
     // ---------- shared corpus machinery ----------
-
-    /// The production writer's RESIDUAL SPAN (bytes) + the symbol stream it
-    /// codes, for the selected kind — the accounting G11-A used, extended to
-    /// the dense D3/D4/D5 kinds and the v7-era adaptive mask costs.
-    fn ledger_span(model: crate::Model, rate: u32, y: &[i16]) -> (usize, usize, Vec<u64>) {
-        match model.kind {
-            MODEL_D1 | MODEL_D2 | MODEL_D3 | MODEL_D4 | MODEL_D5 => {
-                let r = predictor_residuals(y, model.kind);
-                let actual = r
-                    .iter()
-                    .map(|&v| crate::varint_len(crate::zigzag_encode(v)))
-                    .sum();
-                let symbols = r.iter().map(|&v| crate::zigzag_encode(v)).collect();
-                (actual, 0, symbols)
-            }
-            crate::MODEL_PERIOD => {
-                let lag = model.param;
-                let mut symbols = Vec::new();
-                let mut bytes = 0usize;
-                for i in lag..y.len() {
-                    let d = y[i] as i64 - y[i - lag] as i64;
-                    if d != 0 {
-                        symbols.push(crate::zigzag_encode(d));
-                        bytes += crate::varint_len(crate::zigzag_encode(d));
-                    }
-                }
-                let mask_bytes =
-                    crate::mask_adaptive_cost(&crate::period_plan(y, lag).expect("period plan").1);
-                (bytes, mask_bytes, symbols)
-            }
-            crate::MODEL_OSC => {
-                let (actual_res, mask_res, symbols) = crate::g9::ledger_bits(model, rate, y);
-                (actual_res, mask_res, symbols)
-            }
-            _ => (0, 0, Vec::new()),
-        }
-    }
 
     fn corpus_classes() -> Vec<(&'static str, String)> {
         vec![

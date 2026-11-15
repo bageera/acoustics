@@ -98,7 +98,7 @@ mod tests {
     fn g18_msd_wins_only_with_shared_structure() {
         let n = 8000usize;
         let mut xr: u64 = 0x243F6A8885A308D3;
-        let mut noise = |xr: &mut u64| {
+        let noise = |xr: &mut u64| {
             *xr ^= *xr << 13;
             *xr ^= *xr >> 7;
             *xr ^= *xr << 17;
@@ -386,4 +386,305 @@ mod tests {
     // through the production decoder and invert the lifting (asserted in the
     // unit pin; the corpus arms bill encode() whose metric==len is pinned by
     // the standing invariant suite).
+
+    // ---------- G18-C: the geometry x Rice factorial (corpus-gated) ----------
+
+    /// One stream's FULL cell row: pass 1 (frozen production selection,
+    /// backend swap) and pass 2 (the frozen winner vs the single best dense
+    /// competitor, both under the R0/R1/R2 portfolio) in one heavy pass.
+    /// Returns (varint, r1, r2, portfolio, joint, kind_name). Documented
+    /// joint scope: OSC/OP/PERIOD keep their varint-era selection; the full
+    /// predictor x backend enumeration is G21.
+    fn stream_cell(rate: u32, y: &[i16]) -> (usize, usize, usize, usize, usize, &'static str) {
+        let frozen = crate::choose_model(y);
+        let payload = crate::encode(rate, y).expect("encode");
+        let (res_span, _mask, symbols) = crate::g17::ledger_span(frozen, rate, y);
+        let r0 = crate::g17::rice_r0(&symbols);
+        assert_eq!(r0, res_span, "R0 identity: the shipped varint span");
+        let (r1, _k, d1) = crate::g17::rice_r1(&symbols);
+        assert_eq!(d1, symbols, "R1 exact");
+        let (r2, d2) = crate::g17::rice_r2(&symbols);
+        assert_eq!(d2, symbols, "R2 exact");
+        let rice_best = r0.min(r1).min(r2);
+        // pass 2: the frozen winner vs the single best-varint dense kind
+        let mut best_dense: Option<(usize, crate::Model)> = None;
+        for &kind_id in &[
+            crate::MODEL_RAW,
+            crate::MODEL_D1,
+            crate::MODEL_D2,
+            crate::MODEL_D3,
+            crate::MODEL_D4,
+            crate::MODEL_D5,
+        ] {
+            if let Some(len) = crate::payload_len(kind_id, 0, y) {
+                if best_dense.as_ref().is_none_or(|&(l, _)| len < l) {
+                    best_dense = Some((
+                        len,
+                        crate::Model {
+                            kind: kind_id,
+                            param: 0,
+                        },
+                    ));
+                }
+            }
+        }
+        // frozen winner under the Rice portfolio
+        let mut joint = payload.len() - res_span + 1 + rice_best;
+        if let Some((_, m)) = best_dense {
+            if m.kind != frozen.kind {
+                let frame = crate::payload_len(m.kind, 0, y).expect("dense frame");
+                let (span, _mask, syms) = crate::g17::ledger_span(m, rate, y);
+                let dr0 = crate::g17::rice_r0(&syms);
+                assert_eq!(dr0, span, "dense R0 identity");
+                let (dr1, _k2, dd1) = crate::g17::rice_r1(&syms);
+                assert_eq!(dd1, syms, "dense R1 exact");
+                let (dr2, dd2) = crate::g17::rice_r2(&syms);
+                assert_eq!(dd2, syms, "dense R2 exact");
+                let dense_joint = frame - span + 1 + dr0.min(dr1).min(dr2);
+                if dense_joint < joint {
+                    joint = dense_joint;
+                }
+            }
+        }
+        (
+            payload.len(),
+            payload.len() - res_span + 1 + r1,
+            payload.len() - res_span + 1 + r2,
+            payload.len() - res_span + 1 + rice_best,
+            joint,
+            kind_name(frozen.kind),
+        )
+    }
+
+    fn kind_name(kind: u8) -> &'static str {
+        match kind {
+            0 => "RAW",
+            1 => "D1",
+            2 => "D2",
+            3 => "PERIOD",
+            4 => "OSC",
+            5 => "OP",
+            6 => "D3",
+            7 => "D4",
+            8 => "D5",
+            _ => "?",
+        }
+    }
+
+    /// One geometry's transformed streams + the selector/plane overhead.
+    struct GeomStreams {
+        name: &'static str,
+        base: Vec<i16>,
+        half: Vec<i16>,
+        plane: usize,
+        selector: usize,
+    }
+
+    /// The geometry's stream pair with its plane/selector overhead.
+    fn geometry_stream_pairs(l: &[i16], r: &[i16]) -> Vec<GeomStreams> {
+        let mut m = Vec::with_capacity(l.len());
+        let mut a_ms = Vec::with_capacity(l.len());
+        let mut a_c2 = Vec::with_capacity(l.len());
+        let mut a_c3 = Vec::with_capacity(l.len());
+        for (&lv, &rv) in l.iter().zip(r.iter()) {
+            let s = lv as i64 - rv as i64;
+            let (a1, _) = side_split(s);
+            let (a2, _) = side_split(rv as i64 - lv as i64);
+            let (a3, _) = side_split(lv as i64 - rv as i64);
+            m.push((rv as i64 + a1 as i64) as i16);
+            a_ms.push(a1);
+            a_c2.push(a2);
+            a_c3.push(a3);
+        }
+        let plane = l.len().div_ceil(8);
+        vec![
+            GeomStreams {
+                name: "indep",
+                base: l.to_vec(),
+                half: r.to_vec(),
+                plane: 0,
+                selector: 0,
+            },
+            GeomStreams {
+                name: "ms",
+                base: m,
+                half: a_ms,
+                plane,
+                selector: 1,
+            },
+            GeomStreams {
+                name: "c2",
+                base: l.to_vec(),
+                half: a_c2,
+                plane,
+                selector: 1,
+            },
+            GeomStreams {
+                name: "c3",
+                base: r.to_vec(),
+                half: a_c3,
+                plane,
+                selector: 1,
+            },
+        ]
+    }
+
+    /// The G18-C factorial: four geometries x the backend portfolio, every
+    /// cell retained (the roadmap's 12 combinations), pass 1 (frozen
+    /// predictors, backend swap only) and pass 2 (dense-kind joint
+    /// selection), and the interaction terms on the COMPLETE stereo
+    /// payload: I = B + C - A - D. A = independent/varint (production), B =
+    /// independent/Rice portfolio, C = best-varint geometry, D = best-Rice
+    /// geometry. plane = the side's packed parity floor.
+    #[test]
+    #[ignore] // corpus-gated: scripts/g12_fetch.sh
+    fn g18c_geometry_rice_factorial() {
+        let mut rows = String::new();
+        for (name, path) in [
+            ("piano", "testdata/g12/emotional_piano.wav"),
+            ("birds", "testdata/g12/park_birds.wav"),
+            ("river", "testdata/g12/park_river.wav"),
+        ] {
+            let data = std::fs::read(path).expect("corpus (run scripts/g12_fetch.sh)");
+            let (rate, streams) = crate::parse_wav_multichannel(&data).expect("parse");
+            let (l, r) = (&streams[0], &streams[1]);
+            rows.push_str(&format!("G18-C {name} rate={rate}\n"));
+            let (mut arm_a, mut arm_b, mut arm_c, mut arm_d) =
+                (usize::MAX, usize::MAX, usize::MAX, usize::MAX);
+            let (mut b2, mut d2) = (usize::MAX, usize::MAX);
+            for g in geometry_stream_pairs(l, r) {
+                let (gname, sa, sb, plane, sel) = (g.name, g.base, g.half, g.plane, g.selector);
+                let (va, r1a, r2a, pa, ja, ka) = stream_cell(rate, &sa);
+                let (vb, r1b, r2b, pb, jb, kb) = stream_cell(rate, &sb);
+                let varint_cell = va + vb + sel;
+                let r1_cell = r1a + r1b + plane + sel;
+                let r2_cell = r2a + r2b + plane + sel;
+                let portf_cell = pa + pb + plane + sel;
+                let joint_cell = ja + jb + plane + sel;
+                rows.push_str(&format!(
+                    "  {gname}: varint={varint_cell}B r1={r1_cell}B r2={r2_cell}B portfolio={portf_cell}B joint={joint_cell}B (kinds {ka}/{kb})\n"
+                ));
+                if gname == "indep" {
+                    arm_a = varint_cell;
+                    arm_b = portf_cell;
+                    b2 = joint_cell;
+                }
+                if varint_cell < arm_c {
+                    arm_c = varint_cell;
+                }
+                if portf_cell < arm_d {
+                    arm_d = portf_cell;
+                }
+                if joint_cell < d2 {
+                    d2 = joint_cell;
+                }
+            }
+            let s_rice = arm_a - arm_b;
+            let s_geom = arm_a - arm_c;
+            let i = arm_b as i64 + arm_c as i64 - arm_a as i64 - arm_d as i64;
+            let i2 = b2 as i64 + arm_c as i64 - arm_a as i64 - d2 as i64;
+            rows.push_str(&format!(
+                "  ARMS: A={arm_a} B={arm_b} C={arm_c} D={arm_d} | S_rice={s_rice} S_geom={s_geom} I={i} ({}) | pass2 B2={b2} D2={d2} I2={i2} ({})\n",
+                if i > 0 { "complementary" } else if i == 0 { "additive" } else { "overlapping" },
+                if i2 > 0 { "complementary" } else if i2 == 0 { "additive" } else { "overlapping" },
+            ));
+        }
+        eprintln!("{rows}");
+    }
+
+    /// G18-P: the parity-plane diagnostic — is B = S mod 2 structured, or
+    /// is the packed bit plane already optimal? Fraction of ones, run
+    /// stats, the lag-1 conditional entropy, and the packed cost vs a
+    /// bounded bit-RLE (alternating zero-run-first runs; byte-wise varint
+    /// lengths). If packed <= RLE everywhere, the investigation closes with
+    /// bit packing retained.
+    #[test]
+    #[ignore] // corpus-gated: scripts/g12_fetch.sh
+    fn g18p_parity_diagnostic() {
+        let mut rows = String::new();
+        for (name, path) in [
+            ("piano", "testdata/g12/emotional_piano.wav"),
+            ("birds", "testdata/g12/park_birds.wav"),
+            ("river", "testdata/g12/park_river.wav"),
+        ] {
+            let data = std::fs::read(path).expect("corpus (run scripts/g12_fetch.sh)");
+            let (_rate, streams) = crate::parse_wav_multichannel(&data).expect("parse");
+            let (l, r) = (&streams[0], &streams[1]);
+            let mut plane: Vec<u8> = Vec::with_capacity(l.len());
+            for (&lv, &rv) in l.iter().zip(r.iter()) {
+                let s = lv as i64 - rv as i64;
+                let (_, b) = side_split(s);
+                plane.push(b);
+            }
+            let n = plane.len();
+            let ones = plane.iter().filter(|&&b| b == 1).count();
+            // run-length stats
+            let mut runs: Vec<(u8, usize)> = Vec::new();
+            let mut at = 0usize;
+            while at < n {
+                let v = plane[at];
+                let mut run = 1usize;
+                while at + run < n && plane[at + run] == v {
+                    run += 1;
+                }
+                runs.push((v, run));
+                at += run;
+            }
+            let mean_run = n as f64 / runs.len() as f64;
+            let max_run = runs.iter().map(|&(_, r)| r).max().expect("runs non-empty");
+            // H(B | B_prev) via the 2x2 transition counts
+            let (mut t00, mut t01, mut t10, mut t11) = (0usize, 0usize, 0usize, 0usize);
+            for w in plane.windows(2) {
+                match (w[0], w[1]) {
+                    (0, 0) => t00 += 1,
+                    (0, 1) => t01 += 1,
+                    (1, 0) => t10 += 1,
+                    _ => t11 += 1,
+                }
+            }
+            let hcond = {
+                let row = |c0: usize, c1: usize| -> f64 {
+                    let tot = (c0 + c1) as f64;
+                    if tot == 0.0 {
+                        return 0.0;
+                    }
+                    let (p0, p1) = (c0 as f64 / tot, c1 as f64 / tot);
+                    tot * ([p0, p1]
+                        .iter()
+                        .filter(|&&p| p > 0.0)
+                        .map(|&p| -p * p.log2())
+                        .sum::<f64>())
+                };
+                let h = row(t00, t01) + row(t10, t11);
+                h / (t00 + t01 + t10 + t11) as f64
+            };
+            let packed = n.div_ceil(8);
+            // bounded bit-RLE: zero-first canonical alternation, per-run
+            // varint lengths, everything byte-wise
+            let mut rle_bytes = crate::varint_len(runs.len() as u64);
+            let mut first_val_zero = true;
+            for &(v, run) in &runs {
+                if first_val_zero && v == 1 {
+                    // canonical 0-length zero run before a leading data run
+                    rle_bytes += crate::varint_len(runs.len() as u64 + 1);
+                    rle_bytes += crate::varint_len(0);
+                    first_val_zero = false;
+                }
+                rle_bytes += crate::varint_len(run as u64);
+            }
+            let _ = first_val_zero;
+            rows.push_str(&format!(
+                "G18-P {name} n={n} | ones={:.3}% runs={} mean_run={mean_run:.1} max_run={max_run} | \
+                 H(B|B-1)={hcond:.3} b | packed={packed}B rle={rle_bytes}B ({})\n",
+                100.0 * ones as f64 / n as f64,
+                runs.len(),
+                if rle_bytes < packed {
+                    "RLE wins"
+                } else {
+                    "packed retained"
+                },
+            ));
+        }
+        eprintln!("{rows}");
+    }
 }

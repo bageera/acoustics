@@ -7,6 +7,17 @@ Format based on Keep a Changelog; versioning is SemVer.
 
 ### Measured (research only)
 
+- **G18-C/G18-P — the geometry × Rice factorial + parity diagnostic**
+  (`src/g18.rs::g18c_geometry_rice_factorial` / `g18p_parity_diagnostic`,
+  §8.24; wire v7 untouched): all twelve geometry × backend cells billed on
+  complete stereo payloads — the mechanisms **overlap**: under the Rice
+  portfolio the varint-era geometry wins evaporate on piano/birds (D reverts
+  to independent) and shrink on river to +670,881 B beyond rice-alone.
+  Combined totals remain the record's best: piano 1,451,685 → 1,126,048
+  (−22.4%), birds −20.2%, river 72,247,619 → 52,807,433 (−26.9%). Pass-2
+  joint (dense-kind) selection reordered nothing at this scope. G18-P: the
+  parity plane is uniformly random (H(B|B−1) = 1.000 b; RLE 4× worse) —
+  bit packing retained, investigation closed.
 - **G18 — inter-channel geometry** (`src/g18.rs`, §8.23; wire v7 untouched):
   the exact reversible lifting S=L−R / M=R+floor(S/2) implemented
   portfolio-safe (the 17-bit side = 16-bit half + a parity plane billed at

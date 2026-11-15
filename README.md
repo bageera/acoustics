@@ -310,14 +310,16 @@ for it. The known open targets, each cited to the measurement that named it:
 - **The correction-stream context coder.** G5-E measured a D1-context on the
   cascade's deltas at −18.6% (4,489 vs 5,518 B) and justified it as a wire
   milestone; the v5–v7 promotions shipped first. Measured, not yet shipped.
-- **Spatial/inter-channel redundancy.** MEASURED PART (G18, §8.23): the
-  reversible mid/side-difference transforms ran the serialized arms on the
-  stereo corpora — river-class C2 (L + R−L) WINS −8.6% whole-stereo with
-  every byte billed; piano/birds keep independent channels (the 17-bit
-  side's parity plane eats their margins). Selectable-positive; C4/C5
-  (predictive arms) conditional, G18-C's geometry×Rice factorial queued —
-  whether the −22.5% backend share and the −8.6% geometry share compose is
-  the next measurement, not an assumption.
+- **Spatial/inter-channel redundancy.** MEASURED (G18 + G18-C, §8.23-8.24):
+  the serialized arms on the stereo corpora — river-class C2 (L + R−L)
+  wins under varint (−8.6% whole-stereo); the geometry × Rice factorial
+  then showed the mechanisms OVERLAP: under the Rice portfolio piano/birds
+  revert to independent channels and river keeps only +670,881 B beyond
+  rice-alone, at combined −26.9% from production (river 72.25 → 52.81 MB).
+  The 17-bit side's parity plane measured uniformly random (bit packing
+  optimal, RLE 4× worse) — that sub-investigation is closed. C4/C5
+  (predictive arms) stay conditional; the geometry×Rice interaction is
+  measured, not assumed.
 - **Cascade stage optimization.** The greedy per-stage fit measured TIES on
   the two-part fixture (P6); joint or re-anchored stage optimization is the
   named follow-up.
