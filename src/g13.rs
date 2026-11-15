@@ -242,26 +242,47 @@ mod tests {
         }
         eprintln!("{rows}");
     }
-    /// The v5 wire on the real piano recording: the portfolio must now
-    /// select D3 on the piano class and reconstruct exactly (corpus-gated).
+    /// The v7 wire on the real piano recording — the CURRENT-PRODUCTION
+    /// invariant, split from the historical G13 discovery so promotions
+    /// advance the record instead of breaking it (corpus-gated):
+    ///   - historical G13: D3 beats the frozen pre-D3 portfolio — held by
+    ///     `g13_d3_vs_complete_portfolio` (unchanged, never widened)
+    ///   - production selection: the promoted ladder's latest kind (D5)
+    ///   - production size: the EXACT recorded G16 whole-file floor
+    ///   - reconstruction: PCM byte-identical
+    ///
+    /// Updated BY the next promotion's own gate (a committed change of the
+    /// pinned constant), never widened to a `>= kind` range.
     #[test]
     #[ignore]
-    fn g13_wire_piano_promotion() {
+    fn g13_wire_piano_production_v7() {
         let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/testdata/g12");
         let data = std::fs::read(format!("{dir}/emotional_piano.wav")).expect("g12_fetch");
         let (rate, streams) = crate::parse_wav_multichannel(&data).expect("parse");
+        // the recorded G16 whole-file floors (CHANGELOG 0.11.0, G16 Arm D)
+        let floors = [721261usize, 730424usize];
         for (ch, y) in streams.iter().enumerate() {
             let payload = crate::encode(rate, y).expect("whole");
             let (_, back, model) = crate::decode_payload(&payload).expect("decode");
-            assert_eq!(back, *y, "ch{ch}: exact");
+            assert_eq!(back, *y, "ch{ch}: exact reconstruction");
             eprintln!(
-                "G13-WIRE ch{ch}: model kind={} payload={}B (PCM {}B, {:.1}%)",
+                "G16-WIRE ch{ch}: model kind={} payload={}B (PCM {}B, {:.1}%)",
                 model.kind,
                 payload.len(),
                 2 * y.len(),
                 100.0 * payload.len() as f64 / (2 * y.len()) as f64
             );
-            assert_eq!(model.kind, crate::MODEL_D3, "piano class must select D3");
+            // production selection: D5, the ladder's v7 promotion
+            assert_eq!(
+                model.kind,
+                crate::MODEL_D5,
+                "ch{ch}: piano class must select the promoted v7 model"
+            );
+            assert_eq!(
+                payload.len(),
+                floors[ch],
+                "ch{ch}: whole-file floor must match the recorded G16 row"
+            );
         }
     }
     /// G14 — the D4 follow-up's definitive test (the review's ask): D3 vs D4
