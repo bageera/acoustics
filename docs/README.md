@@ -15,8 +15,8 @@ each table); nothing is quoted from an un-rerun session.
 ## Research records (by milestone)
 
 Records are ordered by milestone; each cites the test that produces its
-numbers. Wire format is v2 (`ACUSTCS1`, layout in README); the research layers
-are instrumentation and do not touch it.
+numbers. Wire format is v7 (`ACUSTCS1`, VERSION byte 7; layout in README); the
+research layers are instrumentation and do not touch it.
 
 - [science.md §"Phase coherence"](science.md#p1--p4--phase-coherence-v03) —
   the P1–P4 investigations: Q15 vs Q30 grids, closed-loop regeneration,

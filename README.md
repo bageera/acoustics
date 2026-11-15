@@ -25,9 +25,9 @@ The encoder serializes each candidate completely *in the payload format itself*,
 | `RAW` (0) | exact reference | one zigzag varint per sample |
 | `D1` (1) | first-order differences | residual stream (first sample coded directly) |
 | `D2` (2) | second-order differences | second-derivative residual stream |
+| `D3` (6, v5) | third-order differences | third-derivative residual stream — the G12/G13 class-conditional win: piano +14-17.8% vs the complete v4 portfolio (held-out, both channels) — selectable (broadband rejects, so portfolio picks it only when it wins) |
 | `D4` (7, v6) | fourth-order differences | — the G14 class win: +3.1-4.0% beyond D3 on the REAL piano vs the complete v5 portfolio (held-out, both partitions); selectable (birds/river reject) |
 | `D5` (8, v7) | fifth-order differences | — the G15 continuation (piano +0.8-1.2% vs the complete v6 portfolio, both partitions), shipped ONLY bundled with the adaptive mask layer (the G16 four-arm gate); selectable (birds/river/noise reject) |
-| `D3` (6, v5) | third-order differences | third-derivative residual stream — the G12/G13 class-conditional win: piano +14-17.8% vs the complete v4 portfolio (held-out, both channels) — selectable (broadband rejects, so portfolio picks it only when it wins) |
 | `PERIOD` (3) | difference vs. earlier sample at lag L | dense lag sweep 2..=96, per-32-sample selection bitmasks, nonzero residual varint stream |
 | `OSC` (4) | damped-oscillator family (3 families × 2 grids) | family fields + masked corrections |
 
@@ -177,7 +177,9 @@ Sample-rate metadata rides in the payload header (no companion file).
 
 ## Usage
 
-Requires a Rust toolchain (`rustup`).
+Requires a Rust toolchain (`rustup`). Quick start: `make check-deps`, then
+`make` (fmt + clippy + release tests) — `make help` lists everything, including
+`make roundtrip` and `make test-corpus`.
 
 ```
 cargo run --release -- benchmark input.wav output.acoust   # encode + print model/size stats
@@ -294,9 +296,30 @@ material kept in original form, unmeasured until the engine supports it.
 
 ## Where the research goes next
 
-The v0.5 work order's sequence continues: real-audio corpora (speech, instruments,
-room responses — where the irreducible quantity is the CONDITIONAL entropy of the
-digitized signal given the model, not the marginal entropy of physical noise),
-multi-stage feasibility over re-anchored cascade segments, nonlinear dynamics, and
-the spatial acoustic-field models the project's name promises. Reversibility and
-measured description length stay nonnegotiable.
+The record names its follow-ups; none of them starts work until a gate asks
+for it. The known open targets, each cited to the measurement that named it:
+
+- **The residual backend itself.** The D-ladder measured its own endgame
+  (G15: the continuation win shrinks ~4× per order — bounded by the varint
+  coder, not stream structure), and G11-A put a number on that ceiling: long
+  streams sit 16–16.5% above H0, the integral varint floor. Only a
+  fractional-bit backend reaches it (gated, unbuilt).
+- **The correction-stream context coder.** G5-E measured a D1-context on the
+  cascade's deltas at −18.6% (4,489 vs 5,518 B) and justified it as a wire
+  milestone; the v5–v7 promotions shipped first. Measured, not yet shipped.
+- **Cascade stage optimization.** The greedy per-stage fit measured TIES on
+  the two-part fixture (P6); joint or re-anchored stage optimization is the
+  named follow-up.
+- **24-bit material.** The corpora's 24-bit sources are preserved exactly
+  and stay unmeasured until the engine supports them (corpus note above).
+- **Spatial acoustics** — the acoustic-field models the project's name
+  promises: multi-stage feasibility over re-anchored cascade segments,
+  nonlinear dynamics, and the conditional-entropy regimes of real recordings
+  (speech, instruments, room responses), where the irreducible quantity is
+  the model-conditional entropy of the digitized signal, not the marginal
+  entropy of physical noise.
+- **Decoder resource budgets.** Configurable per-call maxima for samples,
+  i64 intermediates, and mask tables — the 0.11.1 future-work item,
+  without expanding the public API or touching the wire.
+
+Reversibility and measured description length stay nonnegotiable.
