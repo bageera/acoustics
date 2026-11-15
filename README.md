@@ -1,10 +1,10 @@
-# ACOUSTICS
+# manifold-acoustics
 
-**Mathematical & Physics-Informed Audio Research Engine** — v0.8.2 (crate `manifold-acoustics`)
+**ACOUSTICS — Mathematical & Physics-Informed Audio Research Engine** — v0.11.1
 
 A reversible audio-model codec research engine. Every payload decodes to the exact original samples; every experiment pays a measured, explicit information cost.
 
-**Current state (2026-11):** wire v7 (`RAW`/`D1`/`D2`/`D3`/`D4`/`D5`/`PERIOD`/`OSC`/`OP 0..15`, adaptive mask-RLE on PERIOD/OSC, original RLE on OP), 94 tests + 11 corpus-gated tests, publishing to [crates.io](https://crates.io/crates/manifold-acoustics) as 0.7.0 → 0.8.0 → 0.8.1 → 0.8.2 → 0.9.0 (D3 promotion) → 0.10.0 (D4 promotion) → **0.11.0 (D5 + adaptive masks, the combined v7 candidate)** → **0.11.1 (decoder security and validation — the total-decode contract enforced, resource model documented)** with the release gate `scripts/release-gate.sh` (five stages: fmt/clippy/release tests + exact-CLI roundtrip → `package --locked` + tarball audit → consumer FROM THE PACKAGED CRATE → numeric regression → publish behind `ACOUSTICS_RELEASE=1`). The research record now runs the G-line — attribution (G7), coefficient budget (G8), bitstream anatomy (G9), uniform masks (G10), residual audit (G11-A), acoustic diversity (G12), D3 residual coding (G13), the D4 follow-up (G14), the D5 ladder probe (G15), the v7 four-arm gate (G16) — every result with its honest verdict in [docs/science.md](docs/science.md) §8; highlights below.
+**Current state (2026-11):** wire v7 (`RAW`/`D1`/`D2`/`D3`/`D4`/`D5`/`PERIOD`/`OSC`/`OP 0..15`, adaptive mask-RLE on PERIOD/OSC, original RLE on OP); 94 tests + 11 corpus-gated tests; published to [crates.io](https://crates.io/crates/manifold-acoustics) as 0.7.0 → 0.8.0 → 0.8.1 → 0.8.2 → 0.9.0 (D3 promotion) → 0.10.0 (D4 promotion) → **0.11.0 (D5 + adaptive masks, the combined v7 candidate)** → **0.11.1 (decoder security and validation — the total-decode contract enforced, resource model documented)**. The release gate `scripts/release-gate.sh` runs five stages: fmt/clippy/release tests + exact-CLI roundtrip → `package --locked` + tarball audit → consumer FROM THE PACKAGED CRATE → numeric regression → publish behind `ACOUSTICS_RELEASE=1`. The research record runs the G-line — attribution (G7), coefficient budget (G8), bitstream anatomy (G9), uniform masks (G10), residual audit (G11-A), acoustic diversity (G12), D3 residual coding (G13), the D4 follow-up (G14), the D5 ladder probe (G15), the v7 four-arm gate (G16) — every result with its honest verdict in [docs/science.md](docs/science.md) §8; highlights below.
 
 
 The measured research record — foundations, per-milestone experiments, and the
@@ -12,7 +12,7 @@ honest-results contract — lives in [docs/science.md](docs/science.md)
 (index: [docs/README.md](docs/README.md)); every number there cites a
 committed test that reproduces it.
 
-## Status: v0.5 — feasibility geometry + description-length ranking (F1–F3)
+## Foundations (v0.2–v0.5): feasibility geometry + description-length ranking (F1–F3)
 
 Implemented in Rust with **no external crate dependencies**.
 
@@ -94,7 +94,10 @@ candidate and the smallest wins. The MSE candidate is always inside the sweep se
 DL selection ≤ LS selection structurally.
 
 Binary layout: `ACUSTCS1` magic (8) + version (1) + model kind (1) + sample rate u32 LE (4)
-+ sample count varint (+ lag/variant varint for PERIOD/OSC) + model body.
++ sample count varint + model body. The body opens with the kind's parameter varint
+where one exists (PERIOD lag, OSC variant id, OP arm id, RAW submode 0..1), then the
+per-kind payload (dense kinds: pure residual varint stream; PERIOD/OSC: adaptive mask
+section + field/header data + residual stream).
 
 ### Measured v0.3 results (the float-drift benchmark closed)
 
@@ -110,8 +113,8 @@ OSC f1 closed-loop Q30 (P1):      31,320 bytes  (35.5%)
 ```
 
 **OSC now beats PERIOD on the exact fixture where v0.2 lost** — and the decomposition is
-the scientific finding: Q30 (P1) bought ~10% on open-loop, while feeding corrections back
-into the prediction (closed loop, P3's limiting case) bought >3x, because it removes
+the scientific finding. Q30 (P1) bought ~10% on open-loop. Feeding corrections back
+into the prediction (closed loop, P3's limiting case) bought >3×, because it removes
 drift *accumulation* rather than shrinking its increment. The residual Q30-vs-Q15 gap at
 closed loop is ~zero, as predicted: with no compounding there is nothing left for extra
 precision to fix.
@@ -159,13 +162,16 @@ efficiency); no single score is computed anywhere.
   a test asserts the selection metric equals actual serialized size for every candidate
   family, grid, and PERIOD lag.
 - **Total decode** — malformed, truncated, or hostile payloads are rejected with an
-  error, never a panic and never invented samples (varint overrun/u64 overflow,
-  residual accumulation overflow, unstable or envelope-escaping dynamics, invalid
-  lattice geometry, every OSC/OP coefficient and selector field validated against the
-  encoder's reachable set, a 2^27-sample decoder ceiling that restricts the maximum
-  ACCEPTED payload — including otherwise wire-valid claims above it — and mask-run
-  allocation caps; count-derived buffers propagate allocation failure as an error
-  rather than aborting. Resource model: SECURITY.md).
+  error, never a panic and never invented samples. The contract is enforced, not
+  asserted, at every boundary:
+  - varint overrun / u64 overflow; residual accumulation overflow (checked i64);
+  - unstable or envelope-escaping dynamics; invalid lattice geometry;
+  - every OSC/OP coefficient and selector field validated against the encoder's
+    reachable set;
+  - a 2^27-sample decoder ceiling restricting the maximum ACCEPTED payload —
+    including otherwise wire-valid claims above it (resource model: SECURITY.md);
+  - mask-run allocation caps; count-derived buffers propagate allocation failure
+    as an error rather than aborting.
 
 Sample-rate metadata rides in the payload header (no companion file).
 
@@ -178,7 +184,7 @@ cargo run --release -- benchmark input.wav output.acoust   # encode + print mode
 cargo run --release -- decode output.acoust restored.wav   # exact decode to 16-bit WAV
 cargo run --release -- info output.acoust                  # describe a payload
 
-cargo test                                                  # 25-test suite
+cargo test                                                  # 94-test suite
 cargo test -- --nocapture p1_phase                          # print research measurements
 ```
 
@@ -195,8 +201,8 @@ make                    # fmt --check + clippy + release tests (gate stage 1)
 make deps               # toolchain check + the small in-repo g5f corpus
 make test-corpus        # the corpus-gated tests (fetches g12, ~262 MB, first run)
 make roundtrip          # release CLI encode/decode must be PCM byte-identical
-make gate V=0.11.0      # scripts/release-gate.sh (V must equal Cargo.toml)
-make publish V=0.11.0   # gate + crates.io publish (sets ACOUSTICS_RELEASE=1)
+make gate V=0.11.1      # scripts/release-gate.sh (V must equal Cargo.toml)
+make publish V=0.11.1   # gate + crates.io publish (sets ACOUSTICS_RELEASE=1)
 make fmt-check clippy audit clean   # or run each goal individually
 ```
 
@@ -207,13 +213,17 @@ let payload = acoustics::encode(44100, &samples)?;                 // Vec<u8>
 let (rate, samples, model) = acoustics::decode_payload(&payload)?; // exact + model used
 ```
 
-`Model` is `{ kind: u8, param: usize }` — one of `MODEL_RAW`, `MODEL_D1`, `MODEL_D2`,
-`MODEL_PERIOD` (`param` = lag in 2..=96), `MODEL_OSC` (`param` = variant id 0..11,
-see the variant table above).
+`Model` is `{ kind: u8, param: usize }` — one of `MODEL_RAW` (0), `MODEL_D1` (1),
+`MODEL_D2` (2), `MODEL_PERIOD` (3, `param` = lag in 2..=96), `MODEL_OSC` (4,
+`param` = variant id 0..10, see the variant table above), `MODEL_OP` (5,
+`param` = arm id 0..15), `MODEL_D3` (6), `MODEL_D4` (7), `MODEL_D5` (8) — the
+D3/D4/D5 dense kinds carry no `param`.
 
 The `acoustics::research` module exposes the measurement surface:
-`osc_variant_costs`, `period_control_cost`, `f2_stride_curve`, `p4_ls_vs_dl`,
-`synth_phase_lattice` (exact integer f2 pipeline for fixtures); `acoustics::feas`
+`osc_variant_costs`, `op_arm_len`, `period_control_cost`, `f2_stride_curve`,
+`p4_ls_vs_dl`, `synth_phase_lattice` (exact integer f2 pipeline for fixtures),
+`period_len_v6` / `osc_len_v6` / `arm_costs` (the G16 four-arm billing);
+`acoustics::feas`
 adds the v0.5 feasibility/entropy instruments (see its section below).
 
 ## Automated tests
@@ -224,9 +234,12 @@ malformed-payload and bad-OSC-parameter rejections, WAV parse/write roundtrip,
 stereo/8-bit rejection, zigzag+varint boundary values, metric==serialize for every
 candidate — the four v0.3 acceptance tests P1–P4 (drift over 44k samples, rational
 exact fit, anchor-stride tradeoff, LS-vs-DL fitting), the three v0.4 tests P5/P6/P6b
-(exact integer dynamics, mixtures, stage-count cost), and the six v0.5 feasibility
+(exact integer dynamics, mixtures, stage-count cost), the six v0.5 feasibility
 tests F1a–F3 (strip geometry, decoder-representable search, entropy instruments,
-shuffle probe, latent-vs-closed-loop). Suite: 80 tests (+ 3 corpus-gated G12/G13 tests that run after `scripts/g12_fetch.sh`).
+shuffle probe, latent-vs-closed-loop), the D3/D4/D5 wire acceptances, the v7
+hostile-payload battery, and the v6-billing invariant. Suite: 94 tests (+ 11
+corpus-gated G12/G13/g16 tests that run after `scripts/g12_fetch.sh` — or
+`make test-corpus`).
 
 The `feas` research module (`acoustics::feas`, v0.5; wire format untouched) implements
 the description-length formulation as measurement machinery — strip-constraint
@@ -236,7 +249,9 @@ the latent-vs-closed-loop runner. Its API surface: `fundamental_solutions`,
 `latent_state_run`, `closed_loop_residual`. Findings summarized under "Measured
 v0.4–v0.5 results" above.
 
-## Honest limitations (v0.5)
+## Honest limitations
+
+(still current at 0.11.1 — each bullet measured, not assumed)
 
 - One oscillator family per payload stage; f3 cascade capped at 3 stages (greedy
   per-stage coefficient pick — joint stage optimization not yet implemented, and
@@ -251,12 +266,12 @@ v0.4–v0.5 results" above.
   feasibility polygons for truncated dynamics are decoder-defined, not half-plane-
   intersected (the measured distinction above).
 
-## Research record: the G-line (0.8.2, all research-only — wire v4 untouched)
+## Research record: the G-line (research instrumentation; the wire it evaluates is now v7)
 
 Every row measured under the standing gates: complete serialized-payload cost
 (`L_measured(M) = |serialize(M)|`), exact reconstruction, identical downstream
 corrections coding across arms, hash-locked real-audio corpora, negative
-controls. Full tables in science.md §8.2-8.18; the honest ledger:
+controls. Full tables in science.md §8.2-8.21; the honest ledger:
 
 | Experiment | Verdict | Key numbers |
 |---|---|---|
@@ -265,13 +280,15 @@ controls. Full tables in science.md §8.2-8.18; the honest ledger:
 | G8 coefficient budget | closed at the gate | stage coefficients = 0.09-0.10% of payload — even perfect prediction cannot matter |
 | G9 bitstream anatomy | residuals own the payload | 91-100% of real-speech bytes; masks only 9.1% (PERIOD-2) / 8.5% (cascade); the ledger comes from the REAL writer |
 | G10 uniform mask RLE | real, small | +2,853 B (2.5%) on PERIOD-2; RLE LOSES on dense word masks (adaptive M2 required); corpus-wide ~0.5%; SHIPPED in v7 (adaptive selector on PERIOD/OSC, OP untouched) |
+| G13 D3 residual coding | **PROMOTED (v5 wire)** | piano +14.0-17.6% held-out vs D2; river -7.4..-8.1% (dies on stochastic streams, as the noise reject predicts) |
+| G14 the D4 follow-up | **PROMOTED (v6 wire)** | D4 = +3.1-4.0% beyond D3 on the REAL piano vs the complete v5 portfolio (held-out, both partitions); birds/river reject |
 | G15 the D-ladder's endgame | D5 marginally continues | piano +0.8-1.2% vs the complete v6 portfolio (both partitions); birds −18..−20% / river −26% reject; the continuation win shrinks ~4× per order — bounded by the varint coder, not stream structure |
 | G11-A residual audit | floor identified | long streams 16-16.5% above H0 — the integral varint floor; only a fractional-bit backend reaches it (gated, unbuilt) |
 | G12 acoustic diversity | the first genuine new signal | music/environment = D2 (62-72% of PCM, exact); lag-1 Hcond 42-67% below actual at n >= 700k — the structure speech never had |
-| G13 D3 residual coding | **PROMOTED (v5 wire)** | piano +14.0-17.6% held-out vs D2; river -7.4..-8.1% (dies on stochastic streams, as the noise reject predicts) — an adaptive-kind wire candidate |
+| G16 the v7 four-arm gate | **SHIPPED (v7 = both layers)** | piano D-vs-A = −4,968/−4,766 B, pure D5 (masks contribute 0 on dense kinds); PERIOD-2 speech −2,853 B = the G10 anchor exact; birds/river/noise +0 B — zero regressions |
 
 Corpus instrumentation: `scripts/g5f_fetch.sh` (speech, in-repo) and
-`scripts/g12_fetch.sh` (music/environment, 239 MB, hash-locked, gitignored
+`scripts/g12_fetch.sh` (music/environment, 262 MB, hash-locked, gitignored
 with the sha-256s recorded in the script). Sources preserved exactly: 24-bit
 material kept in original form, unmeasured until the engine supports it.
 
