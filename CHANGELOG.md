@@ -3,7 +3,13 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
-## [Unreleased]
+## [0.11.1] — 2026-11-15
+
+> The security and validation patch: a hardened decode contract (controlled
+> rejection of malformed/hostile payloads), the 2^27-samples resource model,
+> and the additive v6-billing correction. Wire v7, the model kinds, the
+> portfolio, the public API, and every recorded measurement are unchanged
+> (the G16 corpus gate reproduces the G15/G16 rows exactly).
 
 ### Added
 
@@ -90,6 +96,17 @@ Format based on Keep a Changelog; versioning is SemVer.
     - Ceiling: every committed corpus stream (g5f speech, g12
       piano/birds/river) is far below 2^27 samples; encode() cannot produce
       a payload for a stream it does not already hold in RAM.
+
+### Measured (research only)
+
+- **Corpus gate 11/11** (`make test-corpus`, release profile): every
+  corpus-gated test passes on the hardened decoder. The stale
+  0.9.0-era promotion assertion was corrected FIRST, as its own committed
+  change (the `g13_wire_piano_production_v7` split: historical D3-vs-frozen-
+  portfolio invariant unchanged; production now pins the promoted D5
+  selection + the exact G16 whole-file floors) — its pre-change failure
+  (kind 8 vs the recorded row, on the pristine 0.11.0 tree) is recorded in
+  the commit history.
 
 ## [0.11.0] — 2026-11-13
 
