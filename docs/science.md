@@ -1217,9 +1217,15 @@ whose D-transform codes it far below its order-0 entropy, while L itself
 re-bills unchanged. The audit's honest lesson lands in the record too:
 H0 is the WRONG instrument for a transform whose product streams are
 temporally correlated — the serialized arm (the meter-is-the-serializer
-rule) is what decided it. The 64-bin plug-in MI read 0.000 on all three
-classes (coarse bins + estimator bias); a finer dependence estimator is
-queued with C4.
+rule) is what decided it. The audit's MI column required validation
+(seen next): the original estimator was sign-inverted — computing
+H(X,Y)−H(X)−H(Y) = −I(X;Y) — whose clamp read 0.000 on every row, and the
+synthetic controls for the validation caught BOTH the sign and a
+static-binning collapse (small-amplitude streams landed in one bin).
+After the correction and control validation
+(`g18_mi_estimator_validated_on_controls`), the re-measured rows read
+MI = 0.280 / 0.454 / 0.529 b/bin (piano/birds/river) — the stereo pairs DO
+carry measurable mutual information, matching the Pearson column.
 
 Verdict: MIXED, selectable-positive — river-class −8.6% whole-stereo with
 every byte billed; piano/birds keep independent channels (the parity plane

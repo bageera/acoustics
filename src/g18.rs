@@ -295,23 +295,32 @@ mod tests {
         best
     }
 
-    /// Signed-binned mutual information (plug-in estimator; small negative
-    /// values at finite samples are estimator bias and clamp to 0).
+    /// Signed mutual information via DYNAMIC per-stream binning (bins span
+    /// each stream's observed range). The earlier static 64-bins-across-i16
+    /// grid collapsed small-amplitude streams into a single bin — reading
+    /// 0.000 even for a perfectly correlated pair — which the synthetic
+    /// controls caught and this version replaces.
     fn mutual_info_binned(a: &[i16], b: &[i16], bins: usize) -> f64 {
-        // signed 6-bit quantization across the full i16 range
-        let quant = |v: &i16| {
-            let q = (*v as i64 - i16::MIN as i64) * bins as i64 / 65_536;
-            (q.clamp(0, bins as i64 - 1)) as usize
+        let q = |s: &[i16]| -> Vec<usize> {
+            let lo = s.iter().map(|&v| v as i64).min().unwrap_or(0);
+            let hi = s.iter().map(|&v| v as i64).max().unwrap_or(1);
+            let span = (hi - lo).max(1);
+            s.iter()
+                .map(|&v| {
+                    (((v as i64 - lo) * bins as i64 / span).clamp(0, bins as i64 - 1)) as usize
+                })
+                .collect()
         };
+        let qa = q(a);
+        let qb = q(b);
         let mut joint = std::collections::HashMap::new();
         let mut ma = std::collections::HashMap::new();
         let mut mb = std::collections::HashMap::new();
-        let n = a.len().min(b.len()) as f64;
-        for (&x, &y) in a.iter().zip(b.iter()) {
-            let (qx, qy) = (quant(&x), quant(&y));
-            *joint.entry((qx, qy)).or_insert(0u32) += 1;
-            *ma.entry(qx).or_insert(0u32) += 1;
-            *mb.entry(qy).or_insert(0u32) += 1;
+        let n = qa.len().min(qb.len()) as f64;
+        for (&x, &y) in qa.iter().zip(qb.iter()) {
+            *joint.entry((x, y)).or_insert(0u32) += 1;
+            *ma.entry(x).or_insert(0u32) += 1;
+            *mb.entry(y).or_insert(0u32) += 1;
         }
         let h_joint: f64 = joint
             .values()
@@ -334,7 +343,62 @@ mod tests {
                 -p * p.log2()
             })
             .sum();
-        (h_joint - h_a - h_b).max(0.0)
+        // I(X;Y) = H(X) + H(Y) - H(X,Y) >= 0. The plug-in estimate carries
+        // ~(63·63)/(2n) bits of bias at 64x64 bins (recorded; the control
+        // thresholds sit above it). NOTE: an earlier version computed
+        // H(X,Y) - H(X) - H(Y) — MINUS the mutual information — whose clamp
+        // to 0 read "0.000" for every corpus row regardless of dependence;
+        // the synthetic controls caught the sign and this version replaces it.
+        (h_a + h_b - h_joint).max(0.0)
+    }
+
+    /// The mutual-information estimator's validation against the three
+    /// synthetic controls the research record requires (correlated,
+    /// independent, delayed). Pins what the corpus MI=0.000 rows mean: the
+    /// 64-bin plug-in reads a shared-component pair HIGH, reads independent
+    /// noise ~0, and does NOT see a pure delay at zero lag — delay is the
+    /// lagged-correlation sweep's domain, not a zero-lag joint histogram's.
+    #[test]
+    fn g18_mi_estimator_validated_on_controls() {
+        let n = 30_000usize;
+        let mut xr: u64 = 0x243F6A8885A308D3;
+        let noise = |xr: &mut u64| {
+            *xr ^= *xr << 13;
+            *xr ^= *xr >> 7;
+            *xr ^= *xr << 17;
+            ((*xr >> 33) % 61) as i64 - 30
+        };
+        // 1. correlated control: y = x → MI must read HIGH (the bins
+        //    collapse onto the diagonal)
+        let base: Vec<i16> = (0..n).map(|_| noise(&mut xr) as i16).collect();
+        let mi_corr = mutual_info_binned(&base, &base, 64);
+        assert!(
+            mi_corr > 4.0,
+            "correlated control: MI={mi_corr:.3} must be high"
+        );
+        // 2. independent control: two independent noise draws → MI ~ 0
+        let l_ind: Vec<i16> = (0..n).map(|_| noise(&mut xr) as i16).collect();
+        let r_ind: Vec<i16> = (0..n).map(|_| noise(&mut xr) as i16).collect();
+        let mi_ind = mutual_info_binned(&l_ind, &r_ind, 64);
+        assert!(
+            mi_ind < 0.15,
+            "independent control: MI={mi_ind:.4} must be ≈ bias"
+        );
+        // 3. delayed control: y = a delayed copy of WHITE-NOISE x → the
+        // zero-lag joint histogram reads ~0 while the lag sweep localizes
+        // the delay — the estimator split the record's rows rely on
+        let x_noise: Vec<i16> = (0..n).map(|_| noise(&mut xr) as i16).collect();
+        let y_delayed: Vec<i16> = x_noise[100..].to_vec();
+        let mi_delay = mutual_info_binned(&x_noise[..n - 100], &y_delayed, 64);
+        assert!(
+            mi_delay < 0.15,
+            "delayed white-noise control: zero-lag MI={mi_delay:.4} must be ≈ bias"
+        );
+        let (best_lag, best_r) = best_lagged(&x_noise[..n - 100], &y_delayed, 200);
+        assert!(
+            best_lag == 100 && best_r > 0.98,
+            "the lag sweep must localize the delay: {best_r:.3}@{best_lag}"
+        );
     }
 
     // ---------- G18-B: the transform arms (corpus-gated) ----------
