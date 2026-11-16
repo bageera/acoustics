@@ -73,10 +73,17 @@ pub(crate) mod g17;
 
 /// G18 research (inter-channel geometry: the stereo-dependence audit and
 /// the reversible channel transform arms C0-C3) — research-only,
-/// corpus-gated; no wire changes. C4/C5 conditional on C1-C3 evidence;
-/// the G18-C backend-interaction factorial is queued.
+/// corpus-gated; no wire changes. C4/C5 DEFERRED per authorization; the
+/// geometry x Rice factorial closed (§8.24).
 #[cfg(test)]
 pub(crate) mod g18;
+
+/// G21 research (joint minimum description length: the exhaustive
+/// geometry x predictor x backend reference enumeration and the
+/// model-ranking inversion measurement) — research-only, corpus-gated;
+/// no wire changes.
+#[cfg(test)]
+pub(crate) mod g21;
 
 /// v0.5 research layer: rounding-cell feasibility, latent-state dynamics,
 /// and description-length ranking (work-order experiments F1-F3).
@@ -525,7 +532,7 @@ pub(crate) fn payload_len(kind: u8, param: usize, samples: &[i16]) -> Option<usi
 const OSC_Q15: i64 = 1 << 15;
 const OSC_Q30: i64 = 1 << 30;
 pub(crate) const OSC_ENVELOPE_MAX: i64 = 1 << 20; // reject unstable/blown dynamics
-const OSC_VARIANT_COUNT: usize = 11;
+pub(crate) const OSC_VARIANT_COUNT: usize = 11;
 // OP battery arms (v0.7): op id space 0..OP_ARM_COUNT; variant id = op id.
 pub const OP_ARM_COUNT: usize = 16;
 
@@ -1890,10 +1897,10 @@ fn decode_osc(
 const OP_LOOPS: [usize; 10] = [2, 3, 4, 6, 8, 16, 32, 64, 96, 128];
 const OP_GAINS: [i64; 4] = [OSC_Q15 / 4, OSC_Q15 / 2, (3 * OSC_Q15) / 4, OSC_Q15];
 
-struct OpPlan {
+pub(crate) struct OpPlan {
     cost: usize,
     masks: Vec<u32>,
-    deltas: Vec<i64>,
+    pub(crate) deltas: Vec<i64>,
     // generator fields
     loop_len: usize,
     echo_delay: usize,
@@ -2028,7 +2035,7 @@ fn scale_plan(samples: &[i16], gsel: usize) -> Option<OpPlan> {
     })
 }
 
-fn op_plan(samples: &[i16], op: usize) -> Option<OpPlan> {
+pub(crate) fn op_plan(samples: &[i16], op: usize) -> Option<OpPlan> {
     match op {
         0..=9 => loop_plan(samples, OP_LOOPS[op]),
         10..=13 => echo_plan(samples, op - 10),

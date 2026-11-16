@@ -1287,6 +1287,67 @@ portfolio. For promotion, the packed plane must be serialized and decoded
 in-wire (padding + length signaling billed) — the research billing already
 charges it conservatively at exactly that cost.
 
+### 8.25 G21-A/G21-B — the joint MDL reference and the model-ranking inversion (research-only; wire v7 untouched)
+
+The exhaustive reference enumerates the ENTIRE production candidate space —
+RAW, D1-D5, all 95 PERIOD lags, all 11 OSC variants, all 16 OP arms — under
+each backend (R0 varint, R1 and R2 Rice), per transformed component stream,
+per geometry (`src/g21.rs`; ~128 candidates per stream, 8 streams per
+stereo class). The R1/R2 arm costs come from an exact closed form whose
+block sweep mirrors rice_r2's own byte-rounded selection rule; every winner
+whose number enters a receipt is re-run through the REAL coder with decode
+verification, and the unit gate pins fast == real on an escape battery.
+
+**Regression controls (asserted byte-for-byte, 36 constants):** the frozen
+varint cells re-pin the complete-billing G18-B whole-stereo arms (§8.23)
+and the frozen rice cells re-pin the G18-C rice matrix (§8.24). Two
+billing-convention defects surfaced and are recorded here: (1) the §8.24
+varint geometry column originally OMITTED the side's packed parity plane —
+an incomplete-billing defect; the corrected C arms re-derive to independent
+on piano/birds (§8.23's result) and c2 on river (−8.6%, unchanged); the
+D/B/A arms were complete throughout and the §8.24 overlap verdict stands,
+re-quantified below. (2) The recorded ms arms bill TWO selector bytes in
+§8.23 but ONE in §8.24's rice columns; both tables reproduce under their
+own conventions, and every new measurement bills one selector byte.
+
+| class | production (A) | frozen-backend Rice (B) | exhaustive joint L* | geometry | joint beyond B |
+|---|---|---|---|---|---|
+| piano | 1,451,685 | 1,126,048 | **1,102,424** (−24.1%) | indep | **−23,624 B** |
+| birds | 45,063,494 | 35,966,797 | **35,754,385** (−20.7%) | **ms** | **−212,412 B** |
+| river | 72,247,619 | 53,478,314 | **52,807,433** (−26.9%) | c2 | 0 |
+
+**G21-B — the model-ranking inversion, MEASURED (neither direction was
+assumed): the inversion is REAL and class-dependent.**
+
+| stream | varint-selected | Rice-selected | saving |
+|---|---|---|---|
+| piano-ch0 | D5 | **D4** (INVERSION) | −10,871 B (−1.9%) |
+| piano-ch1 | D5 | **D4** (INVERSION) | −12,753 B (−2.2%) |
+| birds-ch0 | D3 | **D2** (INVERSION) | inside the −76,384 B portfolio gain |
+| birds-ch1 | D2 | D2 | 0 |
+| river-ch0/ch1 | D2/D1 | D2/D1 | 0 (backend-stable) |
+| speech1/speech3 | D1 | D1 | 0 |
+| speech2-can_you_stop | PERIOD(lag2) | **D2** (INVERSION) | **−11,307 B (−10.5%)** |
+
+The piano result is exactly the hypothesized mechanism: D4's smaller
+residuals distribute more economically under Rice than D5's, so the ladder's
+last rung — the varint-era winner — loses once the one-byte symbol floor
+disappears. Birds' ch0 folds D3→D2. The deepest inversion is speech2:
+PERIOD(2) loses to D2 under the joint optimum by 10.5% despite winning the
+varint metric. River is the honest null: its varint ranking was already
+backend-stable on every geometry (the G18-C D arm had already found its
+joint optimum; there is nothing left for joint selection to recover).
+Piano/birds geometry stays dead under the portfolio except birds-ms, which
+EMERGES as the joint winner (35,754,385, −136,028 B below rice-alone at
+indep) — the geometry's value on birds appears only once the backend can
+exploit the transformed channels' shapes.
+
+Standing ledger note: the exhaustive reference is not an encoder — it
+bounds what any selection strategy (the G21-C shortlist/regret arms) can
+reach within the defined candidate space. Wire v7 is untouched; promotion
+of any joint selection shape rides a future VERSION bump through the
+combined gate, on the USER's call.
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

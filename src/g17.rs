@@ -72,6 +72,19 @@ pub(crate) fn ledger_span(model: crate::Model, rate: u32, y: &[i16]) -> (usize, 
             let (actual_res, mask_res, symbols) = crate::g9::ledger_bits(model, rate, y);
             (actual_res, mask_res, symbols)
         }
+        crate::MODEL_OP => {
+            // the delta stream only (the G17 rule: every field, the base
+            // y-stream and the mask section ride v7-unchanged; the masked
+            // corrections get the backend swap)
+            let plan = crate::op_plan(y, model.param).expect("op plan");
+            let symbols: Vec<u64> = plan
+                .deltas
+                .iter()
+                .map(|&d| crate::zigzag_encode(d))
+                .collect();
+            let bytes = symbols.iter().map(|&u| crate::varint_len(u)).sum();
+            (bytes, crate::mask_rle_wire_len(&plan.masks), symbols)
+        }
         _ => (0, 0, Vec::new()),
     }
 }

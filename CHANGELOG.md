@@ -7,6 +7,20 @@ Format based on Keep a Changelog; versioning is SemVer.
 
 ### Measured (research only)
 
+- **G21-A/G21-B — the joint MDL reference + model-ranking inversion**
+  (`src/g21.rs`, §8.25; wire v7 untouched): the full production candidate
+  space (~128 candidates/stream) enumerated under each backend, per
+  transformed stream, per geometry, with all 36 frozen regression constants
+  asserted byte-for-byte. **The ranking inversion is REAL and
+  class-dependent**: piano D5→D4 both channels (−10,871/−12,753 B beyond
+  G17), birds ch0 D3→D2, speech2 PERIOD(2)→D2 (−10.5%); river and
+  speech1/3 are backend-stable (the honest null). Joint optima:
+  **piano 1,102,424 B (−24.1%), birds 35,754,385 (−20.7%, via an ms geometry
+  that only becomes valuable under Rice), river 52,807,433 (−26.9%)**.
+  The §8.24 varint geometry column's missing parity-plane billing is
+  corrected in-record (C arms re-derive to §8.23's values; the overlap
+  verdict stands). G21-C shortlist/regret strategies are conditional
+  follow-ups; promotion = USER's call.
 - **G18-A estimator correction + control validation**
   (`g18_mi_estimator_validated_on_controls`, §8.23 note): the 64-bin
   mutual-information estimator was sign-inverted (computed −I(X;Y), clamped
