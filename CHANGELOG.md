@@ -29,8 +29,11 @@ Format based on Keep a Changelog; versioning is SemVer.
   the required synthetic controls (correlated pair reads high, independent
   ≈ the +0.07-bit bias floor, pure delay invisible at zero lag and
   localized by the lag sweep). The corpus audit rows re-measure as
-  MI = 0.280 / 0.454 / 0.529 b/bin (piano/birds/river) — measurable
-  dependence, consistent with the Pearson column.
+  MI = 0.280 / 0.454 / 0.529 b/observation (piano/birds/river) — measurable
+  dependence, consistent with the Pearson column. Ledger qualifications:
+  histogram MI is bits per paired observation (not per bin); the estimate
+  remains dependent on bin resolution, sample population, and estimator
+  bias — a diagnostic, never a wire-byte estimate.
 - **G18-C/G18-P — the geometry × Rice factorial + parity diagnostic**
   (`src/g18.rs::g18c_geometry_rice_factorial` / `g18p_parity_diagnostic`,
   §8.24; wire v7 untouched): all twelve geometry × backend cells billed on

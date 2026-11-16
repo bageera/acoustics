@@ -1224,8 +1224,13 @@ synthetic controls for the validation caught BOTH the sign and a
 static-binning collapse (small-amplitude streams landed in one bin).
 After the correction and control validation
 (`g18_mi_estimator_validated_on_controls`), the re-measured rows read
-MI = 0.280 / 0.454 / 0.529 b/bin (piano/birds/river) — the stereo pairs DO
-carry measurable mutual information, matching the Pearson column.
+MI = 0.280 / 0.454 / 0.529 b/observation (piano/birds/river) — the stereo pairs DO
+carry measurable mutual information, matching the Pearson column. Standing
+ledger qualifications (the user's directive, permanent): histogram MI is
+expressed in bits per PAIRED OBSERVATION, not per bin; and the estimate
+depends on bin resolution, sample population, and plug-in bias — it is a
+DEPENDENCE DIAGNOSTIC, never a direct estimate of recoverable wire bytes
+(the serialized meter remains the only byte arbiter).
 
 Verdict: MIXED, selectable-positive — river-class −8.6% whole-stereo with
 every byte billed; piano/birds keep independent channels (the parity plane

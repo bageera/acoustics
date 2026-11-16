@@ -241,7 +241,7 @@ mod tests {
             };
             rows.push_str(&format!(
                 "G18-A {name} rate={rate} n={} | Pearson={pear:.4} best|r|(lag)={best_r:.4}@{best_lag:+} \
-                 MI={mi:.3} b/bin | H0 b/sym: L={hl:.2}+R={hr:.2} vs M={hm:.2}+A={ha:.2}+1.00(plane) ({:+.3}) | \
+                 MI={mi:.3} b/obs | H0 b/sym: L={hl:.2}+R={hr:.2} vs M={hm:.2}+A={ha:.2}+1.00(plane) ({:+.3}) | \
                  side max|S|={s_max} H0(S)={side_bits:.3} b/sym\n",
                 l.len(),
                 h0_ms - h0_lr,
