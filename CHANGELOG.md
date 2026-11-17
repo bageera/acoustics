@@ -7,6 +7,18 @@ Format based on Keep a Changelog; versioning is SemVer.
 
 ### Measured (research only)
 
+- **G21-C — exact reuse + the timed selection arms** (`g21c_selection_arms`,
+  §8.26; wire v7 untouched): the plan double-scan and the OSC double-fit
+  eliminated as EXACT optimizations (mirrors asserted equal to the certified
+  meters; piano J3 17.8 s → 12.7 s), then J0/J1/J3/J4-A..D measured as real
+  executed strategies. **J4-A (top-4 shortlist + the mandated baseline) is
+  the sweet spot: zero regret on 5 of 6 classes, 3.38×/3.48× on birds/river,
+  aggregate regret 0.0125% (≤0.1% target MET)**; the ≤0.5% worst-case target
+  is NOT met on speech2 (+15.118% — the PERIOD(2)→D2 ranking inversion
+  defeats any backend-blind screen at K≤32, preserved as the measured
+  trade-off, not forced); the ≥3× speedup is met on birds/river only. Zero
+  baseline regressions (hard-asserted); 100% reconstruction; peak RSS
+  7.95 GB recorded for the v8 resource conversation.
 - **G21-A/G21-B — the joint MDL reference + model-ranking inversion**
   (`src/g21.rs`, §8.25; wire v7 untouched): the full production candidate
   space (~128 candidates/stream) enumerated under each backend, per

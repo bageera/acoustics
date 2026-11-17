@@ -682,4 +682,464 @@ mod tests {
             stream_report(name, rate, &streams[0]);
         }
     }
+
+    /// Millisecond wall-clock helper (all timings are real elapsed).
+    struct PhasesMs;
+    impl PhasesMs {
+        fn ms(d: std::time::Duration) -> f64 {
+            d.as_secs_f64() * 1_000.0
+        }
+    }
+
+    /// One stream's arm row: (arm tag with stream name, billed cost, ms).
+    type ArmRow = (String, usize, f64);
+    /// One geometry's full arm column plus its tag.
+    type GeomRows = (String, Vec<ArmRow>);
+
+    // ---------- G21-C: exact reuse (preflight) + the timed selection arms ----------
+    //
+    // Directive order: measure the enumeration's phase costs and eliminate
+    // redundant computation (zero selection regret) BEFORE approximate
+    // candidate screening. All timings below are REAL strategy executions;
+    // nothing is derived from a time model.
+
+    /// The reuse-path plan pass: ONE plan/residual scan feeding both the
+    /// billing mirror and the symbol stream. Returns
+    /// (meter_payload, res_span, symbols). OSC is the measured exception
+    /// (certified meter + ledger pass both fit internally — the preflight
+    /// records that duplication explicitly).
+    fn plan_pass(kind: u8, param: usize, y: &[i16]) -> Option<(usize, usize, Vec<u64>)> {
+        let (payload, res_span, symbols) = match kind {
+            crate::MODEL_D1
+            | crate::MODEL_D2
+            | crate::MODEL_D3
+            | crate::MODEL_D4
+            | crate::MODEL_D5 => {
+                let residuals = crate::predictor_residuals(y, kind);
+                let symbols: Vec<u64> =
+                    residuals.iter().map(|&v| crate::zigzag_encode(v)).collect();
+                let span = span_of(&symbols);
+                let len = crate::dense_len_from_residuals(kind, y.len(), &residuals);
+                (len, span, symbols)
+            }
+            crate::MODEL_PERIOD => {
+                let (residuals, masks) = crate::period_plan(y, param)?;
+                let symbols: Vec<u64> = residuals[param..]
+                    .iter()
+                    .filter(|&&r| r != 0)
+                    .map(|&r| crate::zigzag_encode(r))
+                    .collect();
+                let span = span_of(&symbols);
+                let len = crate::period_len_from_plan(y, param, &(residuals, masks));
+                (len, span, symbols)
+            }
+            crate::MODEL_OP => {
+                let plan = crate::op_plan(y, param)?;
+                let symbols: Vec<u64> = plan
+                    .deltas
+                    .iter()
+                    .map(|&d| crate::zigzag_encode(d))
+                    .collect();
+                let span = span_of(&symbols);
+                let len = crate::op_len_from_plan(param, &plan);
+                (len, span, symbols)
+            }
+            crate::MODEL_OSC => {
+                // single fit: the plan carries the meter cost AND the
+                // emission deltas (the certified meter is osc_plan.cost)
+                let plan = crate::osc_plan(y, param)?;
+                let symbols: Vec<u64> = plan
+                    .deltas
+                    .iter()
+                    .map(|&d| crate::zigzag_encode(d))
+                    .collect();
+                let span = span_of(&symbols);
+                (plan.cost, span, symbols)
+            }
+            crate::MODEL_RAW => {
+                let payload = crate::payload_len(kind, 0, y)?;
+                let residuals = crate::predictor_residuals(y, kind);
+                let symbols: Vec<u64> =
+                    residuals.iter().map(|&v| crate::zigzag_encode(v)).collect();
+                let span = span_of(&symbols);
+                (payload, span, symbols)
+            }
+            _ => return None,
+        };
+        Some((payload, res_span, symbols))
+    }
+
+    /// The reuse-pass billing mirroring push_cand's meter semantics
+    /// (r0_pay = the payload; r1/r2/portfolio per the module convention).
+    fn cand_from_plan(kind: u8, param: usize, y: &[i16]) -> Option<(Cand, Vec<u64>)> {
+        let (payload, res_span, symbols) = plan_pass(kind, param, y)?;
+        let (f1, _, _) = fast_r1(&symbols);
+        let f2 = fast_r2(&symbols);
+        let frame = payload - res_span;
+        Some((
+            Cand {
+                kind,
+                param,
+                frame,
+                r0_pay: payload,
+                r1: frame + 1 + f1,
+                r2: frame + 1 + f2,
+                portfolio: frame + 1 + res_span.min(f1).min(f2),
+            },
+            symbols,
+        ))
+    }
+
+    #[test]
+    fn g21c_reuse_mirrors_match_the_certified_meters() {
+        // the mirrors are line-for-line copies; this is the per-class
+        // equality check on a representative (kind, param) set, catching
+        // any arithmetic drift both directions (meter or mirror)
+        let n = 4_096usize;
+        let y: Vec<i16> = (0..n)
+            .map(|i| {
+                let w = (i % 32) as i64 * 120 - 1_900;
+                (w + if i % 512 == 0 { 3_000 } else { 0 }) as i16
+            })
+            .collect();
+        let mut checked = 0usize;
+        for (kind, params) in [
+            (crate::MODEL_D1, vec![0usize]),
+            (crate::MODEL_D2, vec![0]),
+            (crate::MODEL_D3, vec![0]),
+            (crate::MODEL_D4, vec![0]),
+            (crate::MODEL_D5, vec![0]),
+            (crate::MODEL_PERIOD, vec![2usize, 32, 96]),
+            (crate::MODEL_OP, vec![0usize, 15]),
+            (crate::MODEL_OSC, vec![0usize, 6]),
+            (crate::MODEL_RAW, vec![0usize]),
+        ] {
+            for param in params {
+                let meter = crate::payload_len(kind, param, &y);
+                let Some(meter) = meter else {
+                    // the model legitimately rejects this stream — the
+                    // production search skips it; the mirror must agree
+                    let rejected = plan_pass(kind, param, &y).is_none();
+                    assert!(
+                        rejected,
+                        "meter rejected {kind}/{param} but the mirror accepted it"
+                    );
+                    continue;
+                };
+                let (payload, span, symbols) = plan_pass(kind, param, &y)
+                    .unwrap_or_else(|| panic!("plan pass failed {kind}/{param}"));
+                assert_eq!(payload, meter, "mirror == meter {kind}/{param}");
+                let model = crate::Model { kind, param };
+                let (ls_span, _m, ls_symbols) = crate::g17::ledger_span(model, 8_000, &y);
+                if kind == crate::MODEL_RAW {
+                    // RAW's ledger span is the varint stream even when the
+                    // submode minimum billed literal: compare the span only
+                    // when the stream submode won
+                    if payload == crate::header_len(n) + 1 + ls_span {
+                        assert_eq!(span, ls_span, "RAW span {kind}");
+                        checked += 1;
+                    } else {
+                        checked += 1; // literal mode: span comparison skipped
+                    }
+                } else {
+                    assert_eq!(span, ls_span, "span == ledger span {kind}/{param}");
+                    assert_eq!(
+                        symbols, ls_symbols,
+                        "symbols == ledger symbols {kind}/{param}"
+                    );
+                    checked += 1;
+                }
+            }
+        }
+        assert!(checked >= 12, "mirror checks ran: {checked}");
+    }
+
+    /// The timed J arms for ONE stream (all real executions; the rice
+    /// sweeps, plans and verifications that each strategy runs are the
+    /// strategy's own elapsed wall clock). Returns rows of
+    /// (arm, cost, ms). J3 is the reference.
+    fn timed_j_arms(name: &str, y: &[i16], rows: &mut Vec<ArmRow>) {
+        // J0 — frozen production (choose_model IS the production search)
+        let a = std::time::Instant::now();
+        let frozen = crate::choose_model(y);
+        let j0_cost = crate::payload_len(frozen.kind, frozen.param, y).expect("frozen meter");
+        let t_j0 = PhasesMs::ms(a.elapsed());
+
+        // J1 — frozen predictors, then backend selection on that candidate
+        let b = std::time::Instant::now();
+        let (fc, _fsyms) = cand_from_plan(frozen.kind, frozen.param, y).expect("frozen cand");
+        verify_with_real_coder(&fc, 0, y);
+        let j1_cost = fc.portfolio;
+        let t_j1 = PhasesMs::ms(b.elapsed());
+
+        // J3 — the exhaustive joint enumeration (plan pass + rice per
+        // candidate), winner verified through the real coder
+        let c = std::time::Instant::now();
+        let cands = enumerate_reuse(y);
+        let j3_cost = cands.iter().map(|c2| c2.portfolio).min().expect("cands");
+        let j3_win = cands
+            .iter()
+            .min_by_key(|c2| c2.portfolio)
+            .expect("cands")
+            .clone();
+        verify_with_real_coder(&j3_win, 0, y);
+        let t_j3 = PhasesMs::ms(c.elapsed());
+
+        // J4-K — phase 1: the billing-only screen (plan pass, rice withheld,
+        // ranked by the meter payload); phase 2: the shortlist (top-K plus
+        // the mandated baseline) re-planned, exactly rice-billed, verified.
+        // Screening by the varint metric is backend-blind by design — the
+        // measured regret quantifies exactly that blindness (G21-B's
+        // inversion lives here).
+        let j4 = |k: usize| -> (usize, f64) {
+            let s = std::time::Instant::now();
+            let mut screen: Vec<(usize, u8, usize)> = Vec::new();
+            for kind in [
+                crate::MODEL_D1,
+                crate::MODEL_D2,
+                crate::MODEL_D3,
+                crate::MODEL_D4,
+                crate::MODEL_D5,
+            ] {
+                if let Some((payload, _span, _)) = plan_pass(kind, 0, y) {
+                    screen.push((payload, kind, 0));
+                }
+            }
+            for lag in 2..=96usize {
+                if let Some((payload, _span, _)) = plan_pass(crate::MODEL_PERIOD, lag, y) {
+                    screen.push((payload, crate::MODEL_PERIOD, lag));
+                }
+            }
+            for v in 0..crate::OSC_VARIANT_COUNT {
+                if let Some((payload, _span, _)) = plan_pass(crate::MODEL_OSC, v, y) {
+                    screen.push((payload, crate::MODEL_OSC, v));
+                }
+            }
+            for op in 0..crate::OP_ARM_COUNT {
+                if let Some((payload, _span, _)) = plan_pass(crate::MODEL_OP, op, y) {
+                    screen.push((payload, crate::MODEL_OP, op));
+                }
+            }
+            if let Some((payload, _span, _)) = plan_pass(crate::MODEL_RAW, 0, y) {
+                screen.push((payload, crate::MODEL_RAW, 0));
+            }
+            screen.sort_by_key(|&(pay, _, _)| pay);
+            let mut best = usize::MAX;
+            let mut bill = |cand: &Cand| {
+                if cand.portfolio < best {
+                    best = cand.portfolio;
+                }
+            };
+            let mut baseline_billed = false;
+            for &(pay, kind, param) in screen.iter().take(k) {
+                let _ = pay;
+                if kind == frozen.kind && param == frozen.param {
+                    baseline_billed = true;
+                }
+                if let Some((cand, _)) = cand_from_plan(kind, param, y) {
+                    bill(&cand);
+                }
+            }
+            if !baseline_billed {
+                // the mandated fully-billed baseline candidate
+                bill(&fc);
+            }
+            (best, PhasesMs::ms(s.elapsed()))
+        };
+        let (j4a, t4a) = j4(4);
+        let (j4b, t4b) = j4(8);
+        let (j4c, t4c) = j4(16);
+        let (j4d, t4d) = j4(32);
+
+        for (arm, cost, ms) in [
+            ("J0", j0_cost, t_j0),
+            ("J1", j1_cost, t_j1),
+            ("J3", j3_cost, t_j3),
+            ("J4-A", j4a, t4a),
+            ("J4-B", j4b, t4b),
+            ("J4-C", j4c, t4c),
+            ("J4-D", j4d, t4d),
+        ] {
+            rows.push((format!("{name} [{arm}]"), cost, ms));
+        }
+        // zero baseline regressions: every shortlist arm retains the frozen
+        // baseline, so no arm may bill worse than J1
+        for (cost, _) in [(j4a, t4a), (j4b, t4b), (j4c, t4c), (j4d, t4d)] {
+            assert!(
+                cost <= j1_cost,
+                "baseline regression: J4 billed {cost} > J1 {j1_cost}"
+            );
+        }
+    }
+
+    /// The reuse-path enumeration (plan pass + rice per candidate) for J3.
+    fn enumerate_reuse(y: &[i16]) -> Vec<Cand> {
+        let mut cands = Vec::new();
+        for kind in [
+            crate::MODEL_D1,
+            crate::MODEL_D2,
+            crate::MODEL_D3,
+            crate::MODEL_D4,
+            crate::MODEL_D5,
+        ] {
+            if let Some((cand, _)) = cand_from_plan(kind, 0, y) {
+                cands.push(cand);
+            }
+        }
+        for lag in 2..=96usize {
+            if let Some((cand, _)) = cand_from_plan(crate::MODEL_PERIOD, lag, y) {
+                cands.push(cand);
+            }
+        }
+        for v in 0..crate::OSC_VARIANT_COUNT {
+            if let Some((cand, _)) = cand_from_plan(crate::MODEL_OSC, v, y) {
+                cands.push(cand);
+            }
+        }
+        for op in 0..crate::OP_ARM_COUNT {
+            if let Some((cand, _)) = cand_from_plan(crate::MODEL_OP, op, y) {
+                cands.push(cand);
+            }
+        }
+        if let Some((cand, _)) = cand_from_plan(crate::MODEL_RAW, 0, y) {
+            cands.push(cand);
+        }
+        cands
+    }
+
+    /// The class-level G21-C harness: per geometry the stream-level arms
+    /// (summed over the two transformed streams) plus overhead costs; the
+    /// stereo-level best per arm; the J2 geometry-first strategy; and the
+    /// measured regret + speedup tables against J3.
+    #[ignore] // corpus-gated: scripts/g12_fetch.sh + g5f
+    #[test]
+    fn g21c_selection_arms() {
+        let _out_mark = 0usize;
+        let classes = [
+            ("piano", "testdata/g12/emotional_piano.wav", true),
+            ("birds", "testdata/g12/park_birds.wav", true),
+            ("river", "testdata/g12/park_river.wav", true),
+            ("speech1", "testdata/g5f/example_word.wav", false),
+            ("speech2", "testdata/g5f/can_you_stop.wav", false),
+            ("speech3", "testdata/g5f/sample2.wav", false),
+        ];
+        for (name, path, stereo) in classes {
+            // (geometry tag, base, half, plane, selector) — the reuse Geom
+            type PairT = (String, Vec<i16>, Vec<i16>, usize, usize);
+            let data = std::fs::read(path).expect("corpus (run the fetch scripts)");
+            let (rate, streams) = crate::parse_wav_multichannel(&data).expect("parse");
+            eprintln!("G21-C {name} rate={rate}");
+            let pairs: Vec<PairT> = if stereo {
+                let (l, r) = (&streams[0], &streams[1]);
+                let geoms = geometry_list(l, r);
+                geoms
+                    .iter()
+                    .map(|g| {
+                        (
+                            g.name.to_string(),
+                            g.base.clone(),
+                            g.half.clone(),
+                            g.plane,
+                            g.selector_r,
+                        )
+                    })
+                    .collect()
+            } else {
+                vec![(
+                    format!("{name}-mono"),
+                    streams[0].clone(),
+                    streams[0].clone(),
+                    0,
+                    0,
+                )]
+            };
+            // per-geometry arm sums (cost and time), then stereo-level arms
+            let mut g_rows: Vec<GeomRows> = Vec::new();
+            #[allow(clippy::type_complexity)]
+            let g_rows_ref = &mut g_rows;
+            let _ = g_rows_ref;
+            for (gname, base, half, plane, sel) in &pairs {
+                let overhead = sel + plane;
+                let mut rows: Vec<(String, usize, f64)> = Vec::new();
+                let mut half_rows: Vec<(String, usize, f64)> = Vec::new();
+                timed_j_arms(&format!("{gname}:base"), base, &mut rows);
+                if stereo {
+                    timed_j_arms(&format!("{gname}:half"), half, &mut half_rows);
+                    for ((_, ca, ma), (_, cb, mb)) in rows.iter_mut().zip(half_rows.iter()) {
+                        *ca += cb + overhead;
+                        *ma += mb;
+                    }
+                } else {
+                    let _ = half_rows; // mono: the pair IS one stream
+                    let _ = overhead;
+                }
+                g_rows.push((gname.clone(), rows));
+            }
+            // J2 (geometry-first): stage-1 selects the geometry by the
+            // frozen varint cell (the production metric); stage-2 runs the
+            // joint selection (J3-equivalent) inside that geometry.
+            let mut j2_geom = 0usize;
+            {
+                let mut best = usize::MAX;
+                for (gi, (gname, base, half, _plane, sel)) in pairs.iter().enumerate() {
+                    let fb = crate::choose_model(base);
+                    let fh = crate::choose_model(half);
+                    let pb = crate::payload_len(fb.kind, fb.param, base).expect("meter");
+                    let ph2 = crate::payload_len(fh.kind, fh.param, half).expect("meter");
+                    let cell = pb + ph2 + sel;
+                    if cell < best {
+                        best = cell;
+                        j2_geom = gi;
+                        let _ = gname;
+                    }
+                }
+            }
+            let mut best_rows = g_rows[0].1.clone();
+            let arm_names = ["J0", "J1", "J3", "J4-A", "J4-B", "J4-C", "J4-D"];
+            let mut winner_geoms = vec![g_rows[0].0.clone(); best_rows.len()];
+            for (gi, (_, rows)) in g_rows.iter().enumerate().skip(1) {
+                for (i, (_, cost, ms)) in rows.iter().enumerate() {
+                    if *cost < best_rows[i].1 {
+                        best_rows[i].1 = *cost;
+                        best_rows[i].2 = *ms;
+                        winner_geoms[i] = g_rows[gi].0.clone();
+                    }
+                }
+            }
+            let j3_row = best_rows
+                .iter()
+                .find(|r| r.0.ends_with("[J3]"))
+                .expect("J3")
+                .clone();
+            let j2_row = g_rows[j2_geom]
+                .1
+                .iter()
+                .find(|r| r.0.ends_with("[J3]"))
+                .expect("J2")
+                .clone();
+            for (i, (arm, cost, ms)) in best_rows.iter().enumerate() {
+                let kind = arm
+                    .split(" [")
+                    .nth(1)
+                    .map(|s| s.trim_end_matches(']'))
+                    .unwrap_or("?");
+                let _ = kind;
+                let regret = (*cost as i64) - (j3_row.1 as i64);
+                let pct = 100.0 * regret as f64 / j3_row.1 as f64;
+                let speed = j3_row.2 / ms;
+                eprintln!(
+                    "  JARM {}: [{}] cost={cost}B ms={ms:.0} regret={regret}B ({pct:.3}%) S={speed:.2}x",
+                    arm_names.get(i).copied().unwrap_or("?"),
+                    winner_geoms[i],
+                );
+            }
+            eprintln!(
+                "  J2(geometry-first): cost={}B ms={:.0} regret={}B | geometry={}",
+                j2_row.1,
+                j2_row.2,
+                j2_row.1 as i64 - j3_row.1 as i64,
+                pairs[j2_geom].0,
+            );
+        }
+    }
 }

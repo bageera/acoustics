@@ -320,18 +320,23 @@ for it. The known open targets, each cited to the measurement that named it:
   optimal, RLE 4× worse) — that sub-investigation is closed. C4/C5
   (predictive arms) stay conditional; the geometry×Rice interaction is
   measured, not assumed.
-- **Joint model/backend selection.** MEASURED (G21-A/B, §8.25): the ENTIRE
-  production candidate space (~128 candidates per stream) enumerated under
-  each backend, per transformed stream, per geometry — with all 36 frozen
-  regression constants asserted byte-for-byte. The question — does a model
-  that loses under varint win under Rice? — is answered YES, class-depen-
-  dently: piano's D5 folds to D4 on both channels (−10,871/−12,753 B beyond
-  the Rice-only share), birds ch0 D3→D2, and speech2's PERIOD(2) beats to
-  D2 by −10.5%; river and speech1/3 are backend-stable (the honest null).
-  Joint optima: piano 1,102,424 B (−24.1%), birds 35,754,385 (−20.7%, via
-  an ms geometry that only becomes valuable under Rice), river 52,807,433
-  (−26.9%). Selection-regret strategies (G21-C) are the conditional
-  follow-up; promotion changes no wire byte without the combined gate.
+- **Joint model/backend selection.** MEASURED (G21-A/B/C, §8.25-8.26): the
+  ENTIRE production candidate space (~128 candidates per stream) enumerated
+  under each backend, per transformed stream, per geometry — with all 36
+  frozen regression constants asserted byte-for-byte. The question — does a
+  model that loses under varint win under Rice? — is answered YES, class-
+  dependently: piano's D5 folds to D4 on both channels (−10,871/−12,753 B
+  beyond the Rice-only share), birds ch0 D3→D2, and speech2's PERIOD(2)
+  beats to D2 by −10.5%; river and speech1/3 are backend-stable (the honest
+  null). Joint optima: piano 1,102,424 B (−24.1%), birds 35,754,385
+  (−20.7%, via an ms geometry that only becomes valuable under Rice), river
+  52,807,433 (−26.9%). G21-C then measured the selection arms: exact plan
+  reuse (one plan pass bills the meter AND the symbols; the OSC double-fit
+  eliminated), and J4-A — a top-4 shortlist with the fully-billed baseline
+  retained — lands zero regret on 5 of 6 classes at 3.38×/3.48× on
+  birds/river (aggregate 0.0125%), with the honest exception recorded:
+  backend-blind screening cannot see speech2's inversion (+15.1%), so
+  class-stable joint selection stays an open design question for v8.
 - **Cascade stage optimization.** The greedy per-stage fit measured TIES on
   the two-part fixture (P6); joint or re-anchored stage optimization is the
   named follow-up.

@@ -429,7 +429,7 @@ fn predictor_residuals(samples: &[i16], kind: u8) -> Vec<i64> {
 
 /// PERIOD residuals + selection masks. Bit i of masks[(i-lag)/32] says the lag
 /// delta is coded at sample i; zero residuals are never coded (mask bit clear).
-fn period_plan(samples: &[i16], lag: usize) -> Option<(Vec<i64>, Vec<u32>)> {
+pub(crate) fn period_plan(samples: &[i16], lag: usize) -> Option<(Vec<i64>, Vec<u32>)> {
     if lag == 0 || lag >= samples.len() {
         return None;
     }
@@ -489,6 +489,48 @@ pub(crate) fn payload_len(kind: u8, param: usize, samples: &[i16]) -> Option<usi
         }
         _ => header_len(samples.len()) + varint_sum(predictor_residuals(samples, kind).iter()),
     })
+}
+
+// ---- research-surface billing mirrors (G21-C exact reuse; test-gated callers) ----
+//
+// G21's exhaustive reference needs a candidate's cost meter and its residual
+// symbols from the SAME plan pass. These mirrors are line-for-line copies of
+// the certified meters' bodies, taking the already-computed plan; each is
+// asserted equal to the certified meter per class in the g21c harness, and
+// the g21a frozen regression constants fail loudly if one drifts. The
+// meters themselves stay authoritative.
+
+/// The dense kinds' payload cost, mirroring payload_len's dense arm, billed
+/// from residuals the caller already holds.
+#[cfg(test)]
+pub(crate) fn dense_len_from_residuals(_kind: u8, count: usize, residuals: &[i64]) -> usize {
+    header_len(count) + varint_sum(residuals.iter())
+}
+
+/// The PERIOD payload cost, mirroring period_payload_len, from a shared plan.
+#[cfg(test)]
+pub(crate) fn period_len_from_plan(
+    samples: &[i16],
+    lag: usize,
+    plan: &(Vec<i64>, Vec<u32>),
+) -> usize {
+    let (residuals, masks) = plan;
+    let head_bytes = samples[..lag]
+        .iter()
+        .map(|&s| varint_len(zigzag_encode(s as i64)))
+        .sum::<usize>();
+    let tail_bytes = varint_sum(residuals[lag..].iter().filter(|&&r| r != 0));
+    header_len(samples.len())
+        + varint_len(lag as u64)
+        + mask_adaptive_cost(masks)
+        + head_bytes
+        + tail_bytes
+}
+
+/// The OP payload cost, mirroring op_payload_len, from a shared plan.
+#[cfg(test)]
+pub(crate) fn op_len_from_plan(op: usize, plan: &OpPlan) -> usize {
+    varint_len(op as u64) + plan.cost
 }
 
 // ===================== OSC family (P1-P4 experiments) =====================
@@ -909,8 +951,8 @@ const F2_ENV_SELS: [u32; 4] = [0, 8, 9, 10]; // envelope shift (0 = constant)
 
 /// The complete plan for one OSC variant: fields, predicted stream, masks,
 /// deltas, and the exact serialized cost (P4 metric = whole payload).
-struct OscPlan {
-    cost: usize,
+pub(crate) struct OscPlan {
+    pub(crate) cost: usize,
     family: usize,
     grid: u8,
     // single-oscillator fields (f0/f1/f2)
@@ -928,12 +970,12 @@ struct OscPlan {
     env_sel: u32,
     stride_sel: u32,
     // emission
-    masks: Vec<u32>,
-    deltas: Vec<i64>,
+    pub(crate) masks: Vec<u32>,
+    pub(crate) deltas: Vec<i64>,
 }
 
 /// Build the best plan for `variant` under the DL criterion (P4).
-fn osc_plan(samples: &[i16], variant: usize) -> Option<OscPlan> {
+pub(crate) fn osc_plan(samples: &[i16], variant: usize) -> Option<OscPlan> {
     if samples.len() < 2 {
         return None;
     }
@@ -1898,7 +1940,7 @@ const OP_LOOPS: [usize; 10] = [2, 3, 4, 6, 8, 16, 32, 64, 96, 128];
 const OP_GAINS: [i64; 4] = [OSC_Q15 / 4, OSC_Q15 / 2, (3 * OSC_Q15) / 4, OSC_Q15];
 
 pub(crate) struct OpPlan {
-    cost: usize,
+    pub(crate) cost: usize,
     masks: Vec<u32>,
     pub(crate) deltas: Vec<i64>,
     // generator fields

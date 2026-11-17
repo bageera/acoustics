@@ -1353,6 +1353,72 @@ reach within the defined candidate space. Wire v7 is untouched; promotion
 of any joint selection shape rides a future VERSION bump through the
 combined gate, on the USER's call.
 
+### 8.26 G21-C — exact reuse, the timed selection arms, and the measured regret (research-only; wire v7 untouched)
+
+Directive order: instrument first, eliminate redundant computation as an
+EXACT optimization, then measure the approximate screens against the J3
+oracle — and preserve whatever trade-off falls out rather than force a
+favorable verdict.
+
+**Preflight + exact reuse.** The reference enumeration recomputed each
+candidate's plan twice (the certified meters and the symbol extraction each
+scan). The G21-C reuse layer bills every candidate from ONE plan pass
+through billing mirrors asserted equal to the certified meters
+(`g21c_reuse_mirrors_match_the_certified_meters`; the g21a frozen constants
+fail on any drift), and the OSC double-fit was eliminated: `osc_plan`
+already carried the emission deltas, one fit now feeds both the meter cost
+(piano J3: 17.75 s → 12.70 s) and the symbol stream. The certified meters
+themselves remain authoritative; the mirrors are research-surface
+(`#[cfg(test)]`).
+
+**The timed arms (all real executions; release; `g21c_selection_arms`),
+arm rows in the receipt: J0 / J1 / J3 / J4-A..D:**
+
+| class | J0 (frozen v7) | J1 | J3 (oracle) | J4-A regret | J4-A S | worst-regret arm |
+|---|---|---|---|---|---|---|
+| piano | 1,451,685 (6.6 s) | 1,126,048 (1.8 s, +23,624) | 1,102,424 (12.7 s) | **0 (−0.000%)** | 1.79x | 0 across J4 |
+| birds | 45,063,494 (51.6 s) | 35,966,797 (57.5 s, +212,412) | 35,754,385 (230.8 s) | **0** | **3.38x** | 0 across J4 |
+| river | 72,247,619 (56.4 s) | 52,807,433 (70.2 s, 0) | 52,807,433 (272.0 s) | **0** | **3.48x** | 0 across J4 |
+| speech1 | 55,710 | 42,884 (0) | 42,884 (0.35 s) | **0** | 2.00x | 0 |
+| speech2 | 111,093 | 86,098 (+11,307) | 74,791 (0.50 s) | **+11,307 (15.118%)** | 2.12x | 15.118% at every K≤32 |
+| speech3 | 437,335 | 366,870 (0) | 366,870 (2.7 s) | **0** | 2.75x | 0 |
+
+The mandated baseline candidate rode every shortlist (hard-asserted zero
+baseline regressions per stream); every winner was decode-verified through
+the real coder (exact reconstruction 100%).
+
+**Target verdicts (the user's acceptance table, honestly):**
+- Aggregate regret ≤ 0.1%: **MET** — 11,307 B over the 90,148,787 B joint
+  total = **0.0125%**.
+- Worst individual recording ≤ 0.5%: **NOT MET** — speech2's PERIOD(2)→D2
+  ranking inversion defeats the backend-blind (varint-ranked) screen at
+  every shortlist depth K ≤ 32 (+15.118%). The directive's escape clause
+  applies: the measured trade-off stands; the failure mode is exactly the
+  G21-B inversion, now quantified as a screening risk.
+- Encode speedup ≥ 3× vs J3: **MET on birds/river (J4-A: 3.38×/3.48×)**;
+  NOT met on piano (1.79×) or the speech classes (1.44-2.75×) — the plan
+  passes dominate there, and shortlisting the rice sweeps cannot recover
+  what the plans cost. J1 itself remains the cheapest joint path on the
+  backend-stable classes (river: J1 already AT the optimum, 3.87×).
+- Decode performance: no search machinery in decode ✓ (the wire carries one
+  fully-billed selection; decode is the shipped grammar).
+- Peak memory: 7.95 GB measured across the six-class cargo-test chain,
+  dominated by the OSC plans' internal transient sweeps on the 21-25
+  M-sample streams (the production encoder shares this profile); the
+  selection harness itself accumulates nothing candidate-proportional
+  (128 small Cand structs; symbol buffers are per-candidate transient).
+- Baseline regressions: zero ✓.
+
+**Verdict: J4-A (top-4 varint-ranked shortlist + the mandated fully-billed
+baseline) is the measured sweet spot** — zero regret on 5 of 6 classes,
+3.38×/3.48× on the two large stereo classes, aggregate 0.0125% — with one
+honest, quantified failure mode (backend-blind screening vs ranking
+inversions) and a bounded-resources profile recorded for the v8 design
+conversation. J2 (geometry-first) is optimal on birds/river/speech but
++4,542 B on piano (it re-picks ms under the varint metric after Rice
+re-inverted the geometry) — the sequential trap, measured. Timing receipts
+measured release-built, single sweep; peak RSS via `/usr/bin/time -l`.
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection
