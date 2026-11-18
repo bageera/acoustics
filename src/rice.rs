@@ -219,8 +219,9 @@ pub(crate) fn decode_r1_body(bytes: &[u8]) -> Result<Vec<u64>, String> {
     }
     // canonical termination: the symbols' bit total lands WITHIN the final
     // byte (at least one real bit in it), and the tail padding bits are
-    // ZERO — nonzero padding is rejected, not ignored (v8 gate)
-    if rd.nbits == 0 || cap - rd.nbits >= 8 {
+    // ZERO — nonzero padding is rejected, not ignored (v8 gate). A zero
+    // count with an empty body is the canonical empty stream.
+    if cap > 0 && (rd.nbits == 0 || cap - rd.nbits >= 8) {
         return Err(format!(
             "rice stream is not canonically terminated ({} symbols consumed {} bits of {})",
             count, rd.nbits, cap
@@ -284,6 +285,32 @@ pub(crate) fn decode_r2_body(bytes: &[u8]) -> Result<Vec<u64>, String> {
         }
     }
     Ok(out)
+}
+
+/// The encoder-side R1 k selection: the exact per-symbol bit arithmetic
+/// (identical layout to the research coder), swept over the k bound.
+/// The closed form is bit-exact — no bit stream is allocated.
+fn bit_cost(u: u64, k: u8) -> usize {
+    let q = u >> k;
+    if q < ESC_Q {
+        q as usize + 1 + k as usize
+    } else {
+        (ESC_Q + 1) as usize + 8 * crate::varint_len(u)
+    }
+}
+
+/// The best global k for `symbols` under the R1 body layout (k byte +
+/// count varint + stream, byte-rounded once).
+pub(crate) fn best_k_r1(symbols: &[u64]) -> u8 {
+    let mut best: Option<(usize, u8)> = None;
+    for k in 0..=K_MAX_R1 {
+        let bits: usize = symbols.iter().map(|&u| bit_cost(u, k)).sum();
+        let cost = 1 + crate::varint_len(k as u64) + bits.div_ceil(8);
+        if best.is_none_or(|(c, _)| cost <= c) {
+            best = Some((cost, k));
+        }
+    }
+    best.expect("k sweep non-empty").1
 }
 
 #[cfg(test)]

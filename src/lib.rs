@@ -74,9 +74,7 @@ pub(crate) mod g17;
 /// Production Rice codec for wire v8 (G23-B): the bit-level layout is
 /// byte-identical to the G17 research coder (drift-guarded), with bounded
 /// reads, canonical-termination checks and the spec's error contract;
-/// see docs/wire-v8.md §4. (Test-gated until the v8 serializer slice
-/// consumes it.)
-#[cfg(test)]
+/// see docs/wire-v8.md §4.
 pub(crate) mod rice;
 
 /// G18 research (inter-channel geometry: the stereo-dependence audit and
@@ -2245,6 +2243,433 @@ pub fn decode_payload(payload: &[u8]) -> Result<(u32, Vec<i16>, Model), String> 
     decode(payload)
 }
 
+// ===================== wire v8 (G23-B2/C integration) =====================
+//
+// The normative grammar is docs/wire-v8.md; this section implements it.
+// Architecture: per-component v8 frames wrap the CERTIFIED v7 field layer
+// (the same writer, the same masks) with a backend byte and a Rice-coded
+// residual body; the v8 decoder strips the v8 framing, re-materializes the
+// exact v7 component payload, and calls the certified hardened v7 decoder
+// for the mathematics. The Rice bodies come from src/rice.rs. Stereo
+// geometry applies the exact reversible lifting (G18) with the parity
+// plane as the side stack's trailing section.
+
+pub const V8_VERSION: u8 = 8;
+pub const V8_FLAG_NONE: u8 = 0;
+pub const V8_GEO_C0: u64 = 0;
+pub const V8_GEO_C1: u64 = 1;
+pub const V8_GEO_C2: u64 = 2;
+pub const V8_GEO_C3: u64 = 3;
+const V8_BACKEND_R0: u8 = 0;
+const V8_BACKEND_R1: u8 = 1;
+const V8_BACKEND_R2: u8 = 2;
+
+/// One component's wire selection (G23-D fills these; the frame functions
+/// take them explicitly so the selection policy stays out of the grammar).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ComponentSpec {
+    pub model: Model,
+    pub backend: u8, // 0 = R0, 1 = R1, 2 = R2
+}
+
+/// One component's residual varint span + zigzag symbol stream: the byte
+/// length of the residual section the reconstructed v7 payload carries
+/// (R0 bodies are exactly this; Rice bodies decode to exactly this).
+fn v8_residual_span(model: Model, samples: &[i16]) -> Result<(usize, Vec<u64>), String> {
+    let symbols: Vec<u64> = match model.kind {
+        MODEL_D1 | MODEL_D2 | MODEL_D3 | MODEL_D4 | MODEL_D5 => {
+            predictor_residuals(samples, model.kind)
+                .iter()
+                .map(|&v| zigzag_encode(v))
+                .collect()
+        }
+        MODEL_RAW => predictor_residuals(samples, MODEL_RAW)
+            .iter()
+            .map(|&v| zigzag_encode(v))
+            .collect(),
+        MODEL_PERIOD => {
+            let (residuals, _masks) = period_plan(samples, model.param).ok_or(ERR_TRUNCATED)?;
+            residuals[model.param..]
+                .iter()
+                .filter(|&&r| r != 0)
+                .map(|&r| zigzag_encode(r))
+                .collect()
+        }
+        MODEL_OSC => {
+            let plan = osc_plan(samples, model.param).ok_or(ERR_TRUNCATED)?;
+            plan.deltas.iter().map(|&d| zigzag_encode(d)).collect()
+        }
+        MODEL_OP => {
+            let plan = op_plan(samples, model.param).ok_or(ERR_TRUNCATED)?;
+            plan.deltas.iter().map(|&d| zigzag_encode(d)).collect()
+        }
+        _ => return Err(format!("unknown model kind {}", model.kind)),
+    };
+    let span: usize = symbols.iter().map(|&u| varint_len(u)).sum();
+    Ok((span, symbols))
+}
+
+/// One v8 component stack (self-locating: every section length is in the
+/// header): [kind][res_span varint][body_len varint][fields_len varint]
+/// [fields][backend byte][backend body] + the trailing parity plane for
+/// side stacks. RAW carries its ENTIRE v7 body (submode varint + mode
+/// data) in the backend body with an empty fields section; its R1/R2
+/// bodies imply submode 0 per the spec.
+fn v8_component_encode(
+    model: Model,
+    samples: &[i16],
+    backend: u8,
+    plane: &[u8],
+) -> Result<Vec<u8>, String> {
+    let payload = serialize(model, 0, samples)?;
+    let header_len = 14 + varint_len(samples.len() as u64);
+    let (res_span_stream, symbols) = v8_residual_span(model, samples)?;
+    let (fields, tail) = match model.kind {
+        MODEL_RAW => (Vec::new(), payload[header_len..].to_vec()),
+        _ => (
+            payload[header_len..payload.len() - res_span_stream].to_vec(),
+            payload[payload.len() - res_span_stream..].to_vec(),
+        ),
+    };
+    // RAW's R0 body is the entire v7 body (the submode-min rule may pick
+    // the literal encoding), so its wire span is the body's own length;
+    // the Rice arms' reconciliation span stays the varint stream span.
+    let res_span = match (model.kind, backend) {
+        (MODEL_RAW, V8_BACKEND_R0) => tail.len(),
+        _ => res_span_stream,
+    };
+    let body: Vec<u8> = match backend {
+        V8_BACKEND_R0 => tail,
+        V8_BACKEND_R1 => rice::encode_r1_body(&symbols, rice::best_k_r1(&symbols))?,
+        V8_BACKEND_R2 => rice::encode_r2_body(&symbols),
+        _ => return Err(format!("invalid backend byte {backend}")),
+    };
+    let mut out = Vec::with_capacity(64 + body.len());
+    out.push(model.kind);
+    write_varint(&mut out, res_span as u64);
+    write_varint(&mut out, body.len() as u64);
+    write_varint(&mut out, fields.len() as u64);
+    out.extend_from_slice(&fields);
+    out.push(backend);
+    out.extend_from_slice(&body);
+    out.extend_from_slice(plane);
+    Ok(out)
+}
+
+fn v8_push_header(out: &mut Vec<u8>, channels: u8, rate: u32, count: usize) -> Result<(), String> {
+    if count == 0 {
+        return Err(ERR_EMPTY.into());
+    }
+    if count > MAX_DECODE_SAMPLES {
+        return Err(format!(
+            "sample count {count} exceeds the decoder ceiling ({MAX_DECODE_SAMPLES})"
+        ));
+    }
+    if rate == 0 {
+        return Err("invalid sample rate".into());
+    }
+    out.extend_from_slice(MAGIC);
+    out.push(V8_VERSION);
+    out.push(channels);
+    out.push(V8_FLAG_NONE);
+    out.extend_from_slice(&rate.to_le_bytes());
+    write_varint(out, count as u64);
+    Ok(())
+}
+
+/// Mono v8 frame.
+pub fn encode_v8_mono(rate: u32, samples: &[i16], spec: ComponentSpec) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(samples.len() * 2 + 64);
+    v8_push_header(&mut out, 1, rate, samples.len())?;
+    out.extend(v8_component_encode(spec.model, samples, spec.backend, &[])?);
+    Ok(out)
+}
+
+/// Stereo v8 frame: `geo` selects C0-C3; the parity plane rides the side
+/// stack as its trailing section per docs/wire-v8.md §2.
+pub fn encode_v8_stereo(
+    rate: u32,
+    l: &[i16],
+    r: &[i16],
+    geo: u64,
+    a: ComponentSpec,
+    b: ComponentSpec,
+) -> Result<Vec<u8>, String> {
+    if l.len() != r.len() {
+        return Err("stereo channels must be equal length".into());
+    }
+    let mut out = Vec::with_capacity(l.len() * 4 + 128);
+    v8_push_header(&mut out, 2, rate, l.len())?;
+    write_varint(&mut out, geo);
+    let n = l.len();
+    let plane_bytes = n.div_ceil(8);
+    match geo {
+        V8_GEO_C0 => {
+            out.extend(v8_component_encode(a.model, l, a.backend, &[])?);
+            out.extend(v8_component_encode(b.model, r, b.backend, &[])?);
+        }
+        V8_GEO_C1 | V8_GEO_C2 | V8_GEO_C3 => {
+            // side stack: the 16-bit half (floor(s/2)) with the packed
+            // parity plane; s is the component difference per the geometry.
+            // C1's base M = R + A (exact i16 by construction); C2/C3 bases
+            // pass through unchanged.
+            let mut side: Vec<i16> = Vec::with_capacity(n);
+            let mut parity = vec![0u8; plane_bytes];
+            let mut mvec = Vec::with_capacity(n);
+            for (i, (&lv, &rv)) in l.iter().zip(r.iter()).enumerate() {
+                let s = match geo {
+                    V8_GEO_C1 | V8_GEO_C3 => lv as i64 - rv as i64,
+                    _ => rv as i64 - lv as i64,
+                };
+                // s is 17-bit (i16 ± i16) so floor(s/2) always fits i16
+                let ahalf = i16::try_from(s >> 1).map_err(|_| ERR_RANGE.to_string())?;
+                side.push(ahalf);
+                side_pack_bit_at(&mut parity, i, s & 1);
+                if geo == V8_GEO_C1 {
+                    let m = rv as i64 + ahalf as i64;
+                    mvec.push(i16::try_from(m).map_err(|_| ERR_RANGE.to_string())?);
+                }
+            }
+            let (base, side_src): (&[i16], &[i16]) = match geo {
+                V8_GEO_C1 => (&mvec, &side),
+                V8_GEO_C2 => (l, &side),
+                _ => (r, &side),
+            };
+            out.extend(v8_component_encode(a.model, base, a.backend, &[])?);
+            out.extend(v8_component_encode(b.model, side_src, b.backend, &parity)?);
+        }
+        _ => return Err(format!("invalid spatial selector {geo}")),
+    }
+    Ok(out)
+}
+
+/// Pack parity bit i (MSB-first within bytes: sample i sits in the
+/// most-significant bit of byte i/8).
+fn side_pack_bit_at(plane: &mut [u8], i: usize, bit: i64) {
+    if bit != 0 {
+        plane[i / 8] |= 0x80 >> (i % 8);
+    }
+}
+
+/// The v8 decoder: strips the v8 framing, re-materializes each component's
+/// certified v7 payload, and reuses the hardened v7 decoder for the
+/// mathematics. Accepts ONLY VERSION 8, zero FLAGS bits, and bounded
+/// resources throughout.
+pub fn decode_v8(payload: &[u8]) -> Result<(u32, Vec<Vec<i16>>), String> {
+    if payload.len() < 16 || payload[..8] != *MAGIC {
+        return Err(ERR_BAD_MAGIC.into());
+    }
+    if payload[8] != V8_VERSION {
+        return Err(format!("unsupported version {}", payload[8]));
+    }
+    let channels = payload[9];
+    if channels != 1 && channels != 2 {
+        return Err(format!("unsupported channel count {channels}"));
+    }
+    if payload[10] != V8_FLAG_NONE {
+        return Err(format!("unknown v8 feature flags 0x{:02x}", payload[10]));
+    }
+    let rate = u32::from_le_bytes(payload[11..15].try_into().unwrap());
+    if rate == 0 {
+        return Err("invalid sample rate".into());
+    }
+    let mut pos = 15usize;
+    let count = read_varint(payload, &mut pos)? as usize;
+    if count == 0 {
+        return Err(ERR_EMPTY.into());
+    }
+    if count > MAX_DECODE_SAMPLES {
+        return Err(format!(
+            "sample count {count} exceeds the decoder ceiling ({MAX_DECODE_SAMPLES})"
+        ));
+    }
+    let channels_out: Vec<Vec<i16>> = if channels == 1 {
+        let (samples, _model, _plane) = v8_component_decode(payload, &mut pos, rate, count, false)?;
+        vec![samples]
+    } else {
+        let geo = read_varint(payload, &mut pos)?;
+        if geo > V8_GEO_C3 {
+            return Err(format!("invalid spatial selector {geo}"));
+        }
+        let plane_len = count.div_ceil(8);
+        if geo == V8_GEO_C0 {
+            let (l, _m, _p) = v8_component_decode(payload, &mut pos, rate, count, false)?;
+            let (r, _m2, _p2) = v8_component_decode(payload, &mut pos, rate, count, false)?;
+            vec![l, r]
+        } else {
+            let (base, _m, _p) = v8_component_decode(payload, &mut pos, rate, count, false)?;
+            let (half, _m2, plane) = v8_component_decode(payload, &mut pos, rate, count, true)?;
+            if plane.len() < plane_len {
+                return Err("truncated parity plane".into());
+            }
+            // parity canonicality: the plane's unused tail bits (after the
+            // count-th sample) must be ZERO — nonzero padding is rejected,
+            // not ignored (the v8 gate)
+            for i in count..plane_len * 8 {
+                if (plane[i / 8] >> (7 - (i % 8))) & 1 != 0 {
+                    return Err("parity plane padding bits are not zero".into());
+                }
+            }
+            let geometry_inv = |i: usize| -> Result<(i16, i16), String> {
+                // s = 2A + B (the exact split input); each geometry's
+                // inverse is exact arithmetic in i64 with i16 range checks
+                let bit = (plane[i / 8] >> (7 - (i % 8))) & 1;
+                let a = half[i] as i64;
+                let (lv, rv) = match geo {
+                    V8_GEO_C1 => {
+                        let m = base[i] as i64;
+                        (m + a + bit as i64, m - a) // L = M+A+B; R = M-A
+                    }
+                    V8_GEO_C2 => {
+                        let s = a * 2 + bit as i64;
+                        (base[i] as i64, base[i] as i64 + s)
+                    }
+                    _ => {
+                        let s = a * 2 + bit as i64;
+                        (base[i] as i64 + s, base[i] as i64)
+                    }
+                };
+                Ok((
+                    i16::try_from(lv).map_err(|_| ERR_RANGE.to_string())?,
+                    i16::try_from(rv).map_err(|_| ERR_RANGE.to_string())?,
+                ))
+            };
+            let mut l = Vec::with_capacity(count);
+            let mut rch = Vec::with_capacity(count);
+            reserve_for(&mut l, count)?;
+            reserve_for(&mut rch, count)?;
+            for i in 0..count {
+                let (lv, rv) = geometry_inv(i)?;
+                l.push(lv);
+                rch.push(rv);
+            }
+            vec![l, rch]
+        }
+    };
+    // frame termination: nothing may trail the declared components
+    if pos != payload.len() {
+        return Err(format!(
+            "unexpected trailing bytes after the v8 frame ({} of {} consumed)",
+            pos,
+            payload.len()
+        ));
+    }
+    Ok((rate, channels_out))
+}
+
+/// One stack's decoder: [kind][res_span][body_len][fields_len] header walk
+/// → fields slice → backend byte → body → (+ trailing side plane, returned)
+/// → the reconstructed certified v7 payload → the hardened v7 decoder.
+#[allow(clippy::type_complexity)]
+fn v8_component_decode(
+    payload: &[u8],
+    pos: &mut usize,
+    rate: u32,
+    count: usize,
+    side: bool,
+) -> Result<(Vec<i16>, Model, Vec<u8>), String> {
+    let kind = *payload.get(*pos).ok_or(ERR_TRUNCATED)?;
+    if kind > MODEL_D5 {
+        return Err(format!("unknown model kind {kind}"));
+    }
+    *pos += 1;
+    let res_span = read_varint(payload, pos)? as usize;
+    let body_len = read_varint(payload, pos)? as usize;
+    let fields_len = read_varint(payload, pos)? as usize;
+    let plane_len = if side { count.div_ceil(8) } else { 0 };
+    let backend_at = (*pos)
+        .checked_add(fields_len)
+        .ok_or_else(|| ERR_TRUNCATED.to_string())?;
+    if backend_at + 1 + body_len > payload.len() {
+        return Err(ERR_TRUNCATED.to_string());
+    }
+    let backend = payload[backend_at];
+    if backend > V8_BACKEND_R2 {
+        return Err(format!("invalid backend byte {backend}"));
+    }
+    let fields = payload[*pos..backend_at].to_vec();
+    let body = payload[backend_at + 1..backend_at + 1 + body_len].to_vec();
+    let plane: Vec<u8> = if side {
+        payload[backend_at + 1 + body_len..backend_at + 1 + body_len + plane_len].to_vec()
+    } else {
+        Vec::new()
+    };
+    *pos = backend_at + 1 + body_len + plane_len;
+    // residual section reconciliation: R0 bodies are exactly res_span
+    // bytes; Rice bodies must decode to exactly res_span bytes of varints
+    let stream: Vec<u8> = match backend {
+        V8_BACKEND_R0 => {
+            if body_len != res_span {
+                return Err(format!(
+                    "R0 body length {body_len} does not match the residual span {res_span}"
+                ));
+            }
+            body.clone()
+        }
+        V8_BACKEND_R1 => {
+            let syms = rice::decode_r1_body(&body)?;
+            let mut s = Vec::new();
+            for &u in &syms {
+                write_varint(&mut s, u);
+            }
+            if s.len() != res_span {
+                return Err(format!(
+                    "rice residual stream ({} B) does not match the residual span {res_span}",
+                    s.len()
+                ));
+            }
+            s
+        }
+        _ => {
+            let syms = rice::decode_r2_body(&body)?;
+            let mut s = Vec::new();
+            for &u in &syms {
+                write_varint(&mut s, u);
+            }
+            if s.len() != res_span {
+                return Err(format!(
+                    "rice residual stream ({} B) does not match the residual span {res_span}",
+                    s.len()
+                ));
+            }
+            s
+        }
+    };
+    // reconstruct the certified v7 payload (header + fields + the exact
+    // residual span) and reuse the hardened v7 decoder for the mathematics
+    let mut v7 = Vec::new();
+    v8_reconstruct_v7(&mut v7, kind, rate, count, &fields, &stream, backend)?;
+    let (decoded_rate, samples, model) = decode(&v7)?;
+    if decoded_rate != rate {
+        return Err("component rate mismatch against the v8 frame".into());
+    }
+    Ok((samples, model, plane))
+}
+
+fn v8_reconstruct_v7(
+    out: &mut Vec<u8>,
+    kind: u8,
+    rate: u32,
+    count: usize,
+    fields: &[u8],
+    stream: &[u8],
+    backend: u8,
+) -> Result<(), String> {
+    out.extend_from_slice(MAGIC);
+    out.push(VERSION);
+    out.push(kind);
+    out.extend_from_slice(&rate.to_le_bytes());
+    write_varint(out, count as u64);
+    out.extend_from_slice(fields);
+    if kind == MODEL_RAW && backend != V8_BACKEND_R0 {
+        // v8's Rice-on-RAW implies submode 0; the fields section is empty,
+        // so the reconstruction writes the submode varint in front
+        write_varint(out, RAW_SUBMODE_VARINT as u64);
+    }
+    out.extend_from_slice(stream);
+    Ok(())
+}
+
 /// Research API (v0.3 measurement tests): per-variant complete payload costs,
 /// the PERIOD control, the P3 anchor-stride curve, and the P4 LS-vs-DL pair.
 pub mod research {
@@ -2479,6 +2904,256 @@ mod tests {
     use super::*;
     use crate::masks_rle::{MASK_SEL_FIXED, MASK_SEL_RLE};
     use crate::research;
+
+    // ---------- G23-B2/C: the v8 frame battery ----------
+
+    fn v8_spec(kind: u8, param: usize, backend: u8) -> ComponentSpec {
+        ComponentSpec {
+            model: Model { kind, param },
+            backend,
+        }
+    }
+
+    /// Mono round-trips across every applicable model kind and backend,
+    /// each reconstructing EXACTLY. Fixtures are hand-shaped per family
+    /// (a periodic wave for PERIOD, a pure tone for OSC, a repeating
+    /// pattern for OP's loop arm, sawtooth-ish streams for the D ladder).
+    #[test]
+    fn v8_mono_roundtrip_all_kinds_backends() {
+        let rate = 8_000u32;
+        let n = 2_048usize;
+        let wave: Vec<i16> = (0..n)
+            .map(|i| ((i % 32) as i64 * 240 - 3_600) as i16)
+            .collect();
+        let tone: Vec<i16> = (0..n)
+            .map(|i| ((i as i64 * 940 / 8_000).rem_euclid(1_000) * 64 - 32_000) as i16)
+            .collect();
+        let cases: Vec<(u8, usize, Vec<i16>)> = vec![
+            (MODEL_RAW, 0, tone.clone()),
+            (MODEL_D1, 0, wave.clone()),
+            (MODEL_D2, 0, wave.clone()),
+            (MODEL_D3, 0, wave.clone()),
+            (MODEL_PERIOD, 32, wave.clone()),
+            (MODEL_OSC, 0, tone.clone()),
+            (MODEL_OP, 5, {
+                // loop arm: the first 32 samples repeat
+                let mut v = Vec::with_capacity(n);
+                for i in 0..n {
+                    v.push(wave[i % 32]);
+                }
+                v
+            }),
+        ];
+        for (kind, param, samples) in &cases {
+            for backend in [V8_BACKEND_R0, V8_BACKEND_R1, V8_BACKEND_R2] {
+                let frame = encode_v8_mono(rate, samples, v8_spec(*kind, *param, backend))
+                    .unwrap_or_else(|e| panic!("encode {kind}/p{param}/b{backend}: {e}"));
+                let (d_rate, channels) =
+                    decode_v8(&frame).unwrap_or_else(|e| panic!("decode {kind}/b{backend}: {e}"));
+                assert_eq!(d_rate, rate);
+                assert_eq!(channels.len(), 1);
+                assert_eq!(
+                    channels[0], *samples,
+                    "exact reconstruction {kind}/p{param}/b{backend}"
+                );
+                // billing: the frame consumes exactly its serialized bytes
+                // (the decode's frame-termination check already asserts it)
+            }
+        }
+    }
+
+    /// Stereo round-trips across C0-C3 and all three backends.
+    #[test]
+    fn v8_stereo_roundtrip_c0_c3() {
+        let rate = 8_000u32;
+        let n = 2_048usize;
+        let l: Vec<i16> = (0..n)
+            .map(|i| {
+                let v = (i * 37) % 64_000;
+                (v as i64 - 32_000) as i16
+            })
+            .collect();
+        let r: Vec<i16> = l.iter().map(|&v| v.clamp(-20_000, 20_000)).collect();
+        for geo in [V8_GEO_C0, V8_GEO_C1, V8_GEO_C2, V8_GEO_C3] {
+            for backend in [V8_BACKEND_R0, V8_BACKEND_R1, V8_BACKEND_R2] {
+                let frame = encode_v8_stereo(
+                    rate,
+                    &l,
+                    &r,
+                    geo,
+                    v8_spec(MODEL_D2, 0, backend),
+                    v8_spec(MODEL_D1, 0, backend),
+                )
+                .expect("stereo encode");
+                let (d_rate, channels) = decode_v8(&frame)
+                    .unwrap_or_else(|e| panic!("decode geo={geo} b{backend}: {e}"));
+                assert_eq!(d_rate, rate);
+                assert_eq!(channels.len(), 2);
+                assert_eq!(channels[0], l, "exact L geo={geo} b{backend}");
+                assert_eq!(channels[1], r, "exact R geo={geo} b{backend}");
+            }
+        }
+    }
+
+    /// The 17-bit splitting's corner values: extreme channel pairs must
+    /// reconstruct EXACTLY through every geometry (s is 17-bit; the half
+    /// always fits i16; the base M = R + A is exact by construction).
+    #[test]
+    fn v8_stereo_corner_i16_exact() {
+        let rate = 48_000u32;
+        let corners: Vec<(i16, i16)> = vec![
+            (i16::MAX, i16::MIN),
+            (i16::MIN, i16::MAX),
+            (i16::MAX, i16::MAX),
+            (i16::MIN, i16::MIN),
+            (0, i16::MAX),
+            (i16::MIN, 0),
+            (-1, 1),
+            (1, -2),
+        ];
+        let l: Vec<i16> = corners.iter().map(|c| c.0).collect();
+        let r: Vec<i16> = corners.iter().map(|c| c.1).collect();
+        for geo in [V8_GEO_C1, V8_GEO_C2, V8_GEO_C3] {
+            for backend in [V8_BACKEND_R0, V8_BACKEND_R1, V8_BACKEND_R2] {
+                let frame = encode_v8_stereo(
+                    rate,
+                    &l,
+                    &r,
+                    geo,
+                    v8_spec(MODEL_D1, 0, backend),
+                    v8_spec(MODEL_D2, 0, backend),
+                )
+                .unwrap_or_else(|e| panic!("corner encode geo={geo} b{backend}: {e}"));
+                let (_rate, channels) = decode_v8(&frame)
+                    .unwrap_or_else(|e| panic!("corner decode geo={geo} b{backend}: {e}"));
+                assert_eq!(channels[0], l);
+                assert_eq!(channels[1], r);
+            }
+        }
+    }
+
+    /// The parity plane's exact length + its zero-padding enforcement: an
+    /// odd-length stereo frame's plane pads with zeros and a flipped pad
+    /// bit is a decode error (nonzero padding rejected, not ignored).
+    #[test]
+    fn v8_parity_plane_canonical() {
+        let rate = 8_000u32;
+        let n = 33usize; // plane bytes = 5; 7 tail bits are padding
+        let l: Vec<i16> = (0..n).map(|i| (i as i64 * 137) as i16).collect();
+        let r: Vec<i16> = (0..n).map(|i| (i as i64 * -911) as i16).collect();
+        let frame = encode_v8_stereo(
+            rate,
+            &l,
+            &r,
+            V8_GEO_C2,
+            v8_spec(MODEL_D1, 0, V8_BACKEND_R0),
+            v8_spec(MODEL_D2, 0, V8_BACKEND_R0),
+        )
+        .expect("encode");
+        let (d_rate, ch) = decode_v8(&frame).expect("decode");
+        assert_eq!(d_rate, rate);
+        assert_eq!(ch[0], l);
+        assert_eq!(ch[1], r);
+        // flip a PADDING bit (the last plane byte's used-vs-pad boundary)
+        let mut bad = frame.clone();
+        let last = *bad.last_mut().expect("nonempty");
+        *bad.last_mut().expect("nonempty") = last | 0x01;
+        assert!(
+            decode_v8(&bad).is_err(),
+            "nonzero parity padding must be rejected"
+        );
+    }
+
+    /// Malformed-frame rejection: versions, channel counts, flags,
+    /// selectors, truncation, trailing bytes, zero/oversized counts —
+    /// every failure is a clean decode error, never a panic.
+    #[test]
+    fn v8_malformed_frames_rejected() {
+        let rate = 8_000u32;
+        let samples: Vec<i16> = (0..64).map(|i| (i as i64 * 91) as i16).collect();
+        let good =
+            encode_v8_mono(rate, &samples, v8_spec(MODEL_D1, 0, V8_BACKEND_R1)).expect("encode");
+        // version 9 rejected
+        let mut bad = good.clone();
+        bad[8] = 9;
+        assert!(decode_v8(&bad).is_err());
+        // a v7 payload is NOT accepted by decode_v8 (only version 8)
+        let v7 = encode(rate, &samples).expect("v7 encode");
+        assert!(decode_v8(&v7).is_err(), "v8 accepts only version 8");
+        // historical dispatch preserved: the v7 payload still decodes
+        let (r7, s7, _m) = decode_payload(&v7).expect("v7 decode");
+        assert_eq!(r7, rate);
+        assert_eq!(s7, samples);
+        // channel count 3
+        let mut bad = good.clone();
+        bad[9] = 3;
+        assert!(decode_v8(&bad).is_err());
+        // unknown flags bit
+        let mut bad = good.clone();
+        bad[10] = 0x01;
+        assert!(decode_v8(&bad).is_err());
+        // truncated frame
+        assert!(decode_v8(&good[..good.len() - 1]).is_err());
+        // trailing byte (frame termination)
+        let mut bad = good.clone();
+        bad.push(0);
+        assert!(decode_v8(&bad).is_err(), "trailing bytes rejected");
+        // zero sample count: hand-build a header with count = 0
+        let mut bad = Vec::new();
+        bad.extend_from_slice(MAGIC);
+        bad.push(V8_VERSION);
+        bad.push(1);
+        bad.push(V8_FLAG_NONE);
+        bad.extend_from_slice(&rate.to_le_bytes());
+        bad.push(0); // count varint = 0
+        assert!(decode_v8(&bad).is_err());
+        // an oversized count trips the ceiling before any allocation
+        let mut bad = Vec::new();
+        bad.extend_from_slice(MAGIC);
+        bad.push(V8_VERSION);
+        bad.push(1);
+        bad.push(V8_FLAG_NONE);
+        bad.extend_from_slice(&rate.to_le_bytes());
+        write_varint(&mut bad, (MAX_DECODE_SAMPLES + 1) as u64);
+        assert!(decode_v8(&bad).is_err());
+        // an invalid backend byte
+        let mut bad = good.clone();
+        let bl = bad.len();
+        bad[bl - 2] = 7; // an R2 single-component frame: the backend byte
+        assert!(decode_v8(&bad).is_err());
+    }
+
+    /// The residual-count reconciliation: a corrupted symbol-count varint
+    /// in a Rice body must break the decode (it can never be an
+    /// independently trusted allocation authority).
+    #[test]
+    fn v8_count_reconciliation() {
+        let rate = 8_000u32;
+        let samples: Vec<i16> = (0..512).map(|i| (i as i64 * 5) as i16).collect();
+        let frame =
+            encode_v8_mono(rate, &samples, v8_spec(MODEL_D1, 0, V8_BACKEND_R2)).expect("encode");
+        // mono D1 has an EMPTY fields section, so the component is
+        // [kind][res_span v][body_len v][backend][count v][nblocks v][k]
+        // [stream]: the count varint starts right after the backend byte,
+        // a fixed few bytes from the end. Corrupt it — a value-bit flip
+        // elsewhere is a legitimate residual change; the COUNT is the
+        // allocation authority being tested. (The frame's own tail: the
+        // body's stream consumes most of it; the count varint sits 3 bytes
+        // before the trailing k-byte + stream tail for this fixture.)
+        let mut rejected = 0usize;
+        for probe in 1..12usize {
+            let mut bad = frame.clone();
+            let bl = bad.len();
+            bad[bl - probe] ^= 0x01;
+            if decode_v8(&bad).is_err() {
+                rejected += 1;
+            }
+        }
+        assert!(
+            rejected >= 2,
+            "corrupting the rice count region must reject: only {rejected}/11 probes rejected"
+        );
+    }
 
     fn roundtrip(rate: u32, samples: &[i16]) -> Model {
         let payload = encode(rate, samples).expect("encode");
