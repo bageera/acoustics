@@ -7,6 +7,18 @@ Format based on Keep a Changelog; versioning is SemVer.
 
 ### Measured (research only)
 
+- **G23-A — the wire v8 specification freeze** (`docs/wire-v8.md`): the
+  frame layer (channels field, FLAGS extensibility byte), the spatial
+  layer (C0-C3 selector + exact 17-bit lifting identities + the parity
+  plane's bit order, padding and reconstruction checks), normative R0/R1/R2
+  body grammars (Rice k bounds 0..=20 / block k 0..=19, escape semantics,
+  MSB-first streams, zero tail padding unread on decode), the resource and
+  compatibility contract (v8 decoders accept only VERSION 8; v5-v7 paths
+  retained for historical payloads), and the three encoder profiles behind
+  one decoder grammar. Two byte-delta reconciliations defined: the v8
+  backend byte replaces the research arms' internal selector byte (1 byte
+  per component leaner) and the ms two-selector artifact unifies to one
+  spatial selector byte — G23-G charges both.
 - **G21-D/G21-M — backend-aware selection + the corrected memory
   attribution** (`g21d_backend_aware_selection` / `g21m_*`, §8.27; wire v7
   untouched): **K1 (mandatory D-ladder coverage + the varint shortlist)

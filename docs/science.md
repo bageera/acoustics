@@ -1473,6 +1473,24 @@ shape ≈ base 0.6 GB + one-family live ≈ 1 GB), with
 `L_optimized = L_reference` and identical selected parameters +
 deterministic tie-breaking as the permanent invariant.
 
+**Reconciliation note (per the G23 authorization):** the K1 floor table
+above is the C0-pair domain — the birds river rows carry the C0 floors
+(35,890,413 / 53,478,314), not the §8.25 joint geometry optima
+(35,754,385 / 52,807,433, whose geometry dimension the K arms deliberately
+excluded). K1's zero-regret conclusion is therefore scoped to the C0
+candidate domain actually tested; the G23-D integrated selection is
+geometry-aware (all C0-C3, each K1-screened) and G23-G must reconcile the
+integrated totals against the §8.25 joint references after the §5 byte
+deltas are charged.
+
+**Receipt hardening (per the G23 resumability extension):** from G23 on,
+persisted receipt rows also carry the fixture CONTENT hash, the build
+profile and the wire version; a cached row is only trusted when ALL of
+commit id, content hash, profile, wire version and benchmark configuration
+match — a stale receipt can never pass a modified implementation, and the
+release gate always performs a clean final verification regardless of
+cached research rows.
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection
