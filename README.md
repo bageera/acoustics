@@ -337,6 +337,19 @@ for it. The known open targets, each cited to the measurement that named it:
   birds/river (aggregate 0.0125%), with the honest exception recorded:
   backend-blind screening cannot see speech2's inversion (+15.1%), so
   class-stable joint selection stays an open design question for v8.
+- **Backend-aware selection + memory attribution.** MEASURED (G21-D/M,
+  §8.27): K1 — mandatory D-ladder coverage on top of the shortlist —
+  passed the decisive test: speech2 back to the exact 74,791 B exhaustive
+  floor with zero regret on all six classes at +0.6-1.4% screening
+  overhead (the leading Balanced-profile candidate); ranking screens
+  (Rice-estimate, unions, family pruning) measurably miss inversions that
+  only structural coverage defeats. Isolated per-family memory probes put
+  the peak retention in the PERIOD (6.53 GB) and OP (7.01 GB) sweeps —
+  freed-but-cached allocator pool from varying-size transients; OSC
+  measured flat (0.60 GB). The authorized optimization is M3 scratch
+  reuse in the G23 integration (targets ≤4 GB acceptance, ≤2 GB
+  preferred), with identical selections and deterministic tie-breaking
+  as the permanent invariant.
 - **Cascade stage optimization.** The greedy per-stage fit measured TIES on
   the two-part fixture (P6); joint or re-anchored stage optimization is the
   named follow-up.

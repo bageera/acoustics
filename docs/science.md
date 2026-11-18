@@ -1419,6 +1419,60 @@ conversation. J2 (geometry-first) is optimal on birds/river/speech but
 re-inverted the geometry) — the sequential trap, measured. Timing receipts
 measured release-built, single sweep; peak RSS via `/usr/bin/time -l`.
 
+### 8.27 G21-D/G21-M — backend-aware selection validated; the memory attribution corrected (research-only; wire v7 untouched)
+
+**G21-D — the K arms** (`src/g21.rs::k_select`/`g21d_backend_aware_selection`;
+all picks decode-verified; the frozen baseline mandated in every shortlist
+and zero baseline regressions hard-asserted per stream):
+
+| class | C0-pair floor (oracle) | K0 | K1 | K2 | K3 | K4 |
+|---|---|---|---|---|---|---|
+| piano | 1,102,424 | 0 regret | **0** | 0 | 0 | 0 |
+| birds | 35,890,413 | 0 | **0** | +76,384 (0.213%) | 0 | 0 |
+| river | 53,478,314 | 0 | **0** | 0 | 0 | 0 |
+| speech1 | 42,884 | 0 | **0** | 0 | 0 | 0 |
+| speech2 | 74,791 | **+11,307 (15.118%)** | **0 (74,791)** | +11,307 | +11,307 | +11,307 |
+| speech3 | 366,870 | 0 | **0** | 0 | 0 | 0 |
+
+**The decisive test passed: K1 (mandatory D-ladder coverage + the varint
+shortlist) recovers speech2's exact exhaustive floor of 74,791 B while
+holding zero regret everywhere else — K1 is the unique clean sweep and, per
+the authorization's criterion, the leading Balanced profile candidate.**
+Its screening overhead measured +0.6-1.4% (birds 122.5 s → 123.1 s; river
+165.6 s → 168.0 s) — "without substantially increasing encoding time",
+confirmed. K2's Rice-estimate-ranked screen missed birds' dense winners
+(+76,384 B, 0.213%) and K2/K3/K4 all still missed speech2 — **better
+ranking metrics do NOT defeat ranking inversions; only structural family
+coverage does** (the measured lesson the K1-first ordering anticipated).
+K0's speech2 failure reproduced exactly (+11,307 B, 15.118%) as a
+reproducibility pin. Per-stream arm rows persist resumably to
+`target/g21d_receipts.csv` (class, arm, commit, fixture length, oracle,
+exact cost, elapsed ms); a completed (class, arm) re-parses and skips, so
+interruptions no longer restart the corpus (verified: a rerun skipped all
+six classes).
+
+**G21-M/G21-M2 — the memory attribution, corrected by isolated probes.**
+The in-process attribution grew dense +378 MB → period +4,933 MB → op
++1,265 MB → osc +0 MB; the four isolated-per-process probes (one family per
+invocation, `/usr/bin/time -l`) then measured: dense 0.62 GB, period
+**6.53 GB**, op **7.01 GB**, osc **0.60 GB**. Reading: (a) the earlier
+OSC-centred hypothesis is refuted twice over (OSC's isolated peak equals
+the process baseline); (b) the PERIOD (95 lags) and OP (echo arms)
+sweeps' retained pool is real per-process footprint — freed-but-cached
+allocator size-classes from VARYING-size transient allocations across the
+sweep; the live working set is one plan (~0.2-0.8 GB), the retained pool
+is the multi-GB remainder. Disposition of the M arms: **M3 (reuse
+candidate scratch buffers so transient allocations stop changing size
+classes) is the arm that can actually collapse the retained pool**;
+M1/M2 ("retain only the winning plan") cannot — the plans were never
+retained. M6's recompute trade-off is unnecessary while live memory is
+this small. M3 is engine-side scratch plumbing in the period/echo plan
+sweeps: recorded as the authorized optimization for the G23 integration
+slice (targets: 7.95 GB → ≤4 GB acceptance, ≤2 GB preferred; expected
+shape ≈ base 0.6 GB + one-family live ≈ 1 GB), with
+`L_optimized = L_reference` and identical selected parameters +
+deterministic tie-breaking as the permanent invariant.
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection

@@ -7,6 +7,20 @@ Format based on Keep a Changelog; versioning is SemVer.
 
 ### Measured (research only)
 
+- **G21-D/G21-M — backend-aware selection + the corrected memory
+  attribution** (`g21d_backend_aware_selection` / `g21m_*`, §8.27; wire v7
+  untouched): **K1 (mandatory D-ladder coverage + the varint shortlist)
+  passed the decisive test** — speech2 returns to the exact exhaustive
+  floor (74,791 B) with zero regret on all six classes, the unique clean
+  sweep (K0 reproduces the +11,307 B failure; K2/K3/K4's ranking screens
+  miss inversions: birds +76,384 B, speech2 +11,307 B); K1's screening
+  overhead +0.6-1.4%. Per-(class, arm) receipts persist resumably
+  (interruptions no longer restart the corpus). Memory corrected by
+  isolated per-family probes: period 6.53 GB / op 7.01 GB / dense 0.62 GB
+  / **osc 0.60 GB (the OSC hypothesis is dead)** — the growth is
+  freed-but-cached allocator pool from varying-size transients in the
+  PERIOD/OP sweeps; **M3 (scratch reuse) is the only effective M arm**
+  and rides the G23 integration slice.
 - **G21-C — exact reuse + the timed selection arms** (`g21c_selection_arms`,
   §8.26; wire v7 untouched): the plan double-scan and the OSC double-fit
   eliminated as EXACT optimizations (mirrors asserted equal to the certified
