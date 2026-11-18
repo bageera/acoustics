@@ -88,20 +88,25 @@ submode byte; a Rice backend on RAW always implies submode 0).
 
 - **R0** body: the v7 varint stream, byte-for-byte. A R0-selected frame is
   byte-identical to a v7 frame once the backend byte is removed.
-- **R1** body: `k: u8` (0..=20; > 20 → decode error) then a MSB-first bit
-  stream: per symbol, quotient q = u >> k; q < 12 → unary(q) = q ones + one
-  zero, then k remainder bits (omitted entirely when k = 0); q >= 12 →
-  unary(12) + a bit-wise LEB128 varint of the full u; the stream is
-  0-padded to a byte at the END; padding bits are zero on encode, ignored
-  on decode. Symbol count is already known from the frame header (count
-  minus leading coded positions per the model's own rules); any decode
-  that consumes more or fewer bytes than the frame's remaining length
-  reports truncation/garbage.
-- **R2** body: `nblocks: k-bit varint` (ceil(symbols / 256); mismatch with
-  the frame's symbol count → decode error), then ONE continuous bit
-  stream: per block, an 8-bit LEB128-encoded k (block parameter, 0..=19;
-  > 19 → decode error) written bit-wise, then that block's Rice symbols
-  under k; the shared stream is 0-padded once at the end.
+- **R1** body: `symbol count varint`, then `k: u8` (0..=20; > 20 → decode
+  error), then a MSB-first bit stream of exactly that many symbols: per
+  symbol, quotient q = u >> k; q < 12 → unary(q) = q ones + one zero, then
+  k remainder bits (omitted entirely when k = 0); q >= 12 → unary(12) + a
+  bit-wise LEB128 varint of the full u; the stream is 0-padded to a byte at
+  the END with zero bits. **CORRECTED SPEC** (implementation defect; v8.0
+  initial freeze amend): the zero padding is decodable as phantom symbols,
+  so the symbol count is carried explicitly and the decoder reads EXACTLY
+  that many symbols, then REQUIRES the stream to end at a byte boundary
+  with no leftover bits (a decoder that reads fewer/more symbols, or a
+  body whose consumed bits differ, is malformed). Symbol counts are
+  cross-checked against the component's mask sections where applicable.
+- **R2** body: `symbol count varint`, then `nblocks varint` (ceil(count /
+  256); a mismatch with the count or with the decoded blocks → decode
+  error), then ONE continuous bit stream: per block, an 8-bit LEB128-encoded
+  k (block parameter, 0..=19; > 19 → decode error) written bit-wise, then
+  that block's Rice symbols under k (every block but the last codes
+  exactly 256 symbols); the shared stream is 0-padded once at the end with
+  zero bits, consumed exactly.
 
 Encoder k selection and block boundaries follow the G17 research coder
 (verified bit-exact); selection rules are ENCODER-side policy — the

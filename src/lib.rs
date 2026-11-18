@@ -71,6 +71,14 @@ pub(crate) mod g16;
 #[cfg(test)]
 pub(crate) mod g17;
 
+/// Production Rice codec for wire v8 (G23-B): the bit-level layout is
+/// byte-identical to the G17 research coder (drift-guarded), with bounded
+/// reads, canonical-termination checks and the spec's error contract;
+/// see docs/wire-v8.md §4. (Test-gated until the v8 serializer slice
+/// consumes it.)
+#[cfg(test)]
+pub(crate) mod rice;
+
 /// G18 research (inter-channel geometry: the stereo-dependence audit and
 /// the reversible channel transform arms C0-C3) — research-only,
 /// corpus-gated; no wire changes. C4/C5 DEFERRED per authorization; the
