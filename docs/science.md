@@ -1491,6 +1491,45 @@ match — a stale receipt can never pass a modified implementation, and the
 release gate always performs a clean final verification regardless of
 cached research rows.
 
+### 8.28 G23-B2/C/D/G — the integrated wire v8 (research-only in grammar; the v8 wire is the production candidate)
+
+The integrated frames are REAL (not research-translated): per-component
+stacks wrap the certified v7 field layer with a backend byte and a Rice
+body; the decoder re-materializes the exact v7 component payload and calls
+the hardened v7 decoder for the mathematics.
+
+**The corpus reconciliation (G23-G, `src/g23.rs::g23_corpus_reconciliation`;
+Balanced and Maximum, both decoded to byte-exact PCM):**
+
+| class | wire v7 | research reference | **v8 measured** | Δ | reduction |
+|---|---|---|---|---|---|
+| piano | 1,451,685 | 1,102,424 | **1,102,429** | +5 B | 24.1% |
+| birds | 45,063,494 | 35,754,385 | **35,754,394** | +9 B | 20.7% |
+| river | 72,247,619 | 52,807,433 | **52,807,442** | +9 B | 26.9% |
+| speech1 | 55,710 | 42,884 | **42,895** | +11 B | 23.0% |
+| speech2 | 111,093 | 74,791 | **74,802** | +11 B | 32.7% |
+| speech3 | 437,335 | 366,870 | **366,881** | +11 B | 16.1% |
+
+Every delta is the predicted symbol-count-varint margin (L_counts ≤ 5-6 B
+per Rice body; the internal Rice selector byte is dropped in v8); zero
+unexplained differences — `L_v8 = L_research + Δ` VERIFIED wire-vs-wire
+through the real serializer, both profiles, all six classes. The mono
+speech classes were measured in their reference domain (ch0 alone).
+Balanced == Maximum on every class here (K1's structural coverage reaches
+the exhaustive optimum within the reconciled margin).
+
+**Implementation notes**: the encoder selection meter
+(`v8_component_cost`) is the exact closed form pinned byte-for-byte
+against the real writer (`debug_assert_eq!` at every selected frame); the
+Maximum sweep SKIPS inapplicable candidates (model fits that legitimately
+reject) — the meter's truncation error is a bug signal, not a filter
+(caught and fixed during the corpus run: the first Maximum attempt
+panicked on an unstable OSC fit that `payload_len` had already rejected).
+The batteries also caught the C1 decoding inverse (L = M+A+B, R = M−A —
+the corner-i16 fixtures), RAW's R0 span semantics, and the empty-Rice-body
+canonical case. Peak RSS for the whole six-class sweep: 7.63 GB — the M3
+scratch-reuse slice targets the PERIOD/OP transient pool (§8.27).
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection
