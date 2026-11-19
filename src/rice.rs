@@ -9,10 +9,10 @@
 //! the decoder requires EXACT consumption (no dangling bits, no trailing
 //! garbage).
 
-const ESC_Q: u64 = 12;
-const K_MAX_R1: u8 = 20;
-const K_MAX_R2: u8 = 19;
-const BLOCK: usize = 256;
+pub(crate) const ESC_Q: u64 = 12;
+pub(crate) const K_MAX_R1: u8 = 20;
+pub(crate) const K_MAX_R2: u8 = 19;
+pub(crate) const R2_BLOCK: usize = 256;
 
 struct BitWriter {
     bytes: Vec<u8>,
@@ -160,13 +160,13 @@ pub(crate) fn encode_r1_body(symbols: &[u64], k: u8) -> Result<Vec<u8>, String> 
 /// block's k varint rides bit-wise inside the shared stream. Encoder-side
 /// per-block k selection mirrors the G17 research sweep byte-for-byte.
 pub(crate) fn encode_r2_body(symbols: &[u64]) -> Vec<u8> {
-    let nblocks = symbols.len().div_ceil(BLOCK);
+    let nblocks = symbols.len().div_ceil(R2_BLOCK);
     let mut out = Vec::new();
     crate::write_varint(&mut out, symbols.len() as u64);
     let mut s = BitWriter::new();
     let mut at = 0usize;
     for _ in 0..nblocks {
-        let end = (at + BLOCK).min(symbols.len());
+        let end = (at + R2_BLOCK).min(symbols.len());
         let slice = &symbols[at..end];
         let mut best: Option<(usize, u8)> = None;
         for k in 0..=K_MAX_R2 {
@@ -255,13 +255,17 @@ pub(crate) fn decode_r2_body(bytes: &[u8]) -> Result<Vec<u64>, String> {
         // every block but the last codes exactly BLOCK symbols; the last
         // block consumes the exact remaining bits (canonical below)
         let remaining = count - out.len().min(count);
-        let block_syms = if b + 1 == nblocks { remaining } else { BLOCK };
+        let block_syms = if b + 1 == nblocks {
+            remaining
+        } else {
+            R2_BLOCK
+        };
         let mut n = 0usize;
         while n < block_syms && rd.nbits < cap {
             out.push(rd.symbol(k)?);
             n += 1;
         }
-        if b + 1 < nblocks && n < BLOCK {
+        if b + 1 < nblocks && n < R2_BLOCK {
             return Err("rice R2 block declares 256 symbols but the stream ended early".into());
         }
     }
@@ -290,7 +294,7 @@ pub(crate) fn decode_r2_body(bytes: &[u8]) -> Result<Vec<u64>, String> {
 /// The encoder-side R1 k selection: the exact per-symbol bit arithmetic
 /// (identical layout to the research coder), swept over the k bound.
 /// The closed form is bit-exact — no bit stream is allocated.
-fn bit_cost(u: u64, k: u8) -> usize {
+pub(crate) fn bit_cost(u: u64, k: u8) -> usize {
     let q = u >> k;
     if q < ESC_Q {
         q as usize + 1 + k as usize

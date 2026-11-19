@@ -84,6 +84,15 @@ pub(crate) mod rice;
 #[cfg(test)]
 pub(crate) mod g18;
 
+/// G23 — wire v8 integration measurement (research-only; wire v7 untouched).
+///
+/// G23-G: the integrated v8 frames measured on the locked corpus through
+/// the REAL serializer, decoded to byte-exact PCM, reconciled against the
+/// frozen research references (L_v8 = L_research + Δ_framing + Δ_selectors
+/// + L_counts; unexplained differences fail the gate).
+#[cfg(test)]
+pub(crate) mod g23;
+
 /// G21 research (joint minimum description length: the exhaustive
 /// geometry x predictor x backend reference enumeration and the
 /// model-ranking inversion measurement) — research-only, corpus-gated;
@@ -2670,6 +2679,291 @@ fn v8_reconstruct_v7(
     Ok(())
 }
 
+/// The v8 encoder search profiles (one decoder grammar, different search).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum V8Profile {
+    Fast,
+    Balanced,
+    Maximum,
+}
+
+/// The exact v8 serialized cost of one component WITHOUT allocating the
+/// frame: certified v7 fields (via the real writer), the residual span,
+/// and the backend body built by the same closed forms the codec uses.
+/// Pinned byte-for-byte against `v8_component_encode` by the battery
+/// (the meter-is-the-serializer invariant, v8 edition).
+fn v8_component_cost(
+    model: Model,
+    samples: &[i16],
+    backend: u8,
+    has_plane: bool,
+) -> Result<usize, String> {
+    let payload_len_v7 =
+        payload_len(model.kind, model.param, samples).ok_or_else(|| ERR_TRUNCATED.to_string())?;
+    let header_len = 14 + varint_len(samples.len() as u64);
+    let (res_span, symbols) = v8_residual_span(model, samples)?;
+    let fields_len = match model.kind {
+        MODEL_RAW => 0,
+        _ => payload_len_v7 - header_len - res_span,
+    };
+    let body_len: usize = match backend {
+        V8_BACKEND_R0 => {
+            if model.kind == MODEL_RAW {
+                payload_len_v7 - header_len
+            } else {
+                res_span
+            }
+        }
+        V8_BACKEND_R1 => {
+            let count_varint = varint_len(symbols.len() as u64);
+            let k = rice::best_k_r1(&symbols);
+            let bits: usize = symbols.iter().map(|&u| rice::bit_cost(u, k)).sum();
+            count_varint + 1 + bits.div_ceil(8)
+        }
+        V8_BACKEND_R2 => {
+            let count_varint = varint_len(symbols.len() as u64);
+            let nblocks = symbols.len().div_ceil(rice::R2_BLOCK);
+            let mut bits = 0usize;
+            for block in symbols.chunks(rice::R2_BLOCK) {
+                let mut best = usize::MAX;
+                for k in 0..=rice::K_MAX_R2 {
+                    let b = 8 * varint_len(k as u64)
+                        + block.iter().map(|&u| rice::bit_cost(u, k)).sum::<usize>();
+                    best = best.min(b);
+                }
+                bits += best;
+            }
+            count_varint + varint_len(nblocks as u64) + bits.div_ceil(8)
+        }
+        _ => return Err(format!("invalid backend byte {backend}")),
+    };
+    Ok(1 + varint_len(res_span as u64)
+        + varint_len(body_len as u64)
+        + varint_len(fields_len as u64)
+        + fields_len
+        + 1
+        + body_len
+        + if has_plane {
+            samples.len().div_ceil(8)
+        } else {
+            0
+        })
+}
+
+/// The v8 frame header: magic, version, channels, flags, rate, count plus
+/// the spatial selector varint for stereo.
+fn v8_frame_header_len(count: usize, stereo: bool) -> usize {
+    8 + 1 + 1 + 1 + 4 + varint_len(count as u64) + usize::from(stereo)
+}
+
+/// The per-stream candidate selection (K1 vs exhaustive) shared by the
+/// stereo and mono selection entry points.
+fn v8_pick_stream(
+    samples: &[i16],
+    frozen: Model,
+    profile: V8Profile,
+) -> Result<ComponentSpec, String> {
+    let mut consider: Vec<ComponentSpec> = Vec::new();
+    // inapplicable candidates (model fits that legitimately reject
+    // on a stream) are SKIPPED, never artificially expanded: the
+    // meter's ERR_TRUNCATED is a bug, not a filter
+    let mut push = |kind: u8, param: usize| {
+        if payload_len(kind, param, samples).is_some() {
+            for backend in [V8_BACKEND_R0, V8_BACKEND_R1, V8_BACKEND_R2] {
+                consider.push(v8_spec(kind, param, backend));
+            }
+        }
+    };
+    match profile {
+        V8Profile::Maximum => {
+            for kind in [MODEL_D1, MODEL_D2, MODEL_D3, MODEL_D4, MODEL_D5] {
+                push(kind, 0);
+            }
+            for lag in 2..=96usize {
+                push(MODEL_PERIOD, lag);
+            }
+            for v in 0..OSC_VARIANT_COUNT {
+                push(MODEL_OSC, v);
+            }
+            for op in 0..OP_ARM_COUNT {
+                push(MODEL_OP, op);
+            }
+            push(MODEL_RAW, 0);
+        }
+        _ => {
+            // K1: the varint-ranked top-4 + mandatory dense coverage
+            // + the frozen baseline; final picks via the exact meter
+            let mut ranked: Vec<(usize, u8, usize)> = Vec::new();
+            for lag in 2..=96usize {
+                if let Some(len) = payload_len(MODEL_PERIOD, lag, samples) {
+                    ranked.push((len, MODEL_PERIOD, lag));
+                }
+            }
+            for v in 0..OSC_VARIANT_COUNT {
+                if let Some(len) = payload_len(MODEL_OSC, v, samples) {
+                    ranked.push((len, MODEL_OSC, v));
+                }
+            }
+            for op in 0..OP_ARM_COUNT {
+                if let Some(len) = payload_len(MODEL_OP, op, samples) {
+                    ranked.push((len, MODEL_OP, op));
+                }
+            }
+            ranked.sort_by_key(|&(len, _, _)| len);
+            for &(_, kind, param) in ranked.iter().take(4) {
+                for backend in [V8_BACKEND_R0, V8_BACKEND_R1, V8_BACKEND_R2] {
+                    consider.push(v8_spec(kind, param, backend));
+                }
+            }
+            for kind in [MODEL_RAW, MODEL_D1, MODEL_D2, MODEL_D3, MODEL_D4, MODEL_D5] {
+                for backend in [V8_BACKEND_R0, V8_BACKEND_R1, V8_BACKEND_R2] {
+                    consider.push(v8_spec(kind, 0, backend));
+                }
+            }
+            for backend in [V8_BACKEND_R0, V8_BACKEND_R1, V8_BACKEND_R2] {
+                consider.push(v8_spec(frozen.kind, frozen.param, backend));
+            }
+        }
+    }
+    let mut best: Option<(usize, ComponentSpec)> = None;
+    for spec in consider {
+        let cost = v8_component_cost(spec.model, samples, spec.backend, false)?;
+        if best.as_ref().is_none_or(|(c, _)| cost < *c) {
+            best = Some((cost, spec));
+        }
+    }
+    best.map(|(_, s)| s).ok_or_else(|| ERR_EMPTY.to_string())
+}
+
+/// Mono v8 selection (the mono counterpart of `encode_v8_select`).
+pub fn encode_v8_select_mono(
+    rate: u32,
+    samples: &[i16],
+    profile: V8Profile,
+) -> Result<Vec<u8>, String> {
+    let frozen = choose_model(samples);
+    let spec = v8_pick_stream(samples, frozen, profile)?;
+    encode_v8_mono(rate, samples, spec)
+}
+
+/// The v8 integrated encoder selection (G23-D).
+///
+/// Balanced: every applicable geometry C0-C3, each component screened by
+/// K1 — the varint-ranked top-4 plus MANDATORY dense-family coverage plus
+/// the frozen production baseline — then exactly billed through the v8
+/// meter; the winning geometry is serialized by the real writer.
+///
+/// Maximum: the exhaustive applicable geometry x model x backend minimum.
+///
+/// Both emit the same grammar; the decoder never learns the profile.
+pub fn encode_v8_select(
+    rate: u32,
+    l: &[i16],
+    r: &[i16],
+    profile: V8Profile,
+) -> Result<Vec<u8>, String> {
+    if l.len() != r.len() {
+        return Err("stereo channels must be equal length".into());
+    }
+    let frozen_l = choose_model(l);
+    let frozen_r = choose_model(r);
+    let mut best_frame: Option<Vec<u8>> = None;
+    let mut best_cost = usize::MAX;
+    let geometries = match profile {
+        V8Profile::Fast => vec![V8_GEO_C0],
+        _ => vec![V8_GEO_C0, V8_GEO_C1, V8_GEO_C2, V8_GEO_C3],
+    };
+    for geo in geometries {
+        // the geometry's component streams (C1's base M = R + A)
+        let mut base: Vec<i16> = Vec::new();
+        let mut side: Vec<i16> = Vec::with_capacity(l.len());
+        match geo {
+            V8_GEO_C0 => {
+                base = l.to_vec();
+                side = r.to_vec();
+            }
+            V8_GEO_C2 => {
+                base = l.to_vec();
+                for (&lv, &rv) in l.iter().zip(r.iter()) {
+                    let s = rv as i64 - lv as i64;
+                    side.push(i16::try_from(s >> 1).map_err(|_| ERR_RANGE.to_string())?);
+                }
+            }
+            V8_GEO_C3 => {
+                base = r.to_vec();
+                for (&lv, &rv) in l.iter().zip(r.iter()) {
+                    let s = lv as i64 - rv as i64;
+                    side.push(i16::try_from(s >> 1).map_err(|_| ERR_RANGE.to_string())?);
+                }
+            }
+            _ => {
+                for (&lv, &rv) in l.iter().zip(r.iter()) {
+                    let s = lv as i64 - rv as i64;
+                    let ahalf = i16::try_from(s >> 1).map_err(|_| ERR_RANGE.to_string())?;
+                    let m = rv as i64 + ahalf as i64;
+                    base.push(i16::try_from(m).map_err(|_| ERR_RANGE.to_string())?);
+                    side.push(ahalf);
+                }
+            }
+        }
+        // the side stack's parity plane, packed MSB-first
+        let mut plane = vec![0u8; l.len().div_ceil(8)];
+        for (i, (&lv, &rv)) in l.iter().zip(r.iter()).enumerate() {
+            let s = match geo {
+                V8_GEO_C1 | V8_GEO_C3 => lv as i64 - rv as i64,
+                _ => rv as i64 - lv as i64,
+            };
+            side_pack_bit_at(&mut plane, i, s & 1);
+        }
+        let spec_base = v8_pick_stream(&base, frozen_l, profile)?;
+        let spec_side = v8_pick_stream(&side, frozen_r, profile)?;
+        let plane = if geo == V8_GEO_C0 {
+            None
+        } else {
+            Some(plane.as_slice())
+        };
+        let frame_cost = v8_component_cost(spec_base.model, &base, spec_base.backend, false)?
+            + v8_component_cost(spec_side.model, &side, spec_side.backend, plane.is_some())?
+            + v8_frame_header_len(l.len(), geo != V8_GEO_C0);
+        if frame_cost >= best_cost {
+            continue;
+        }
+        let frame = match plane {
+            Some(plane) => {
+                let ca = v8_component_encode(spec_base.model, &base, spec_base.backend, &[])?;
+                let cb = v8_component_encode(spec_side.model, &side, spec_side.backend, plane)?;
+                let mut out = Vec::with_capacity(frame_cost);
+                v8_push_header(&mut out, 2, rate, l.len())?;
+                write_varint(&mut out, geo);
+                out.extend_from_slice(&ca);
+                out.extend_from_slice(&cb);
+                out
+            }
+            None => {
+                let ca = v8_component_encode(spec_base.model, &base, spec_base.backend, &[])?;
+                let cb = v8_component_encode(spec_side.model, &side, spec_side.backend, &[])?;
+                let mut out = Vec::with_capacity(frame_cost);
+                v8_push_header(&mut out, 2, rate, l.len())?;
+                write_varint(&mut out, geo);
+                out.extend_from_slice(&ca);
+                out.extend_from_slice(&cb);
+                out
+            }
+        };
+        debug_assert_eq!(frame.len(), frame_cost, "the meter must equal the wire");
+        best_cost = frame.len();
+        best_frame = Some(frame);
+    }
+    best_frame.ok_or_else(|| ERR_EMPTY.to_string())
+}
+
+fn v8_spec(kind: u8, param: usize, backend: u8) -> ComponentSpec {
+    ComponentSpec {
+        model: Model { kind, param },
+        backend,
+    }
+}
+
 /// Research API (v0.3 measurement tests): per-variant complete payload costs,
 /// the PERIOD control, the P3 anchor-stride curve, and the P4 LS-vs-DL pair.
 pub mod research {
@@ -2933,6 +3227,8 @@ mod tests {
             (MODEL_D1, 0, wave.clone()),
             (MODEL_D2, 0, wave.clone()),
             (MODEL_D3, 0, wave.clone()),
+            (MODEL_D4, 0, wave.clone()),
+            (MODEL_D5, 0, wave.clone()),
             (MODEL_PERIOD, 32, wave.clone()),
             (MODEL_OSC, 0, tone.clone()),
             (MODEL_OP, 5, {
