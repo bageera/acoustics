@@ -102,4 +102,62 @@ mod tests {
             }
         }
     }
+
+    /// G23-H qualification probes: the INDEPENDENT stereo holdouts
+    /// (park_wind — never part of the frozen reconciliation table — and the
+    /// full example_word stereo, a domain the speech references did not
+    /// test) plus ABSOLUTE encode/decode throughput on the holdout fixture.
+    /// Exact reconstruction is asserted; sizes and rates are recorded.
+    #[test]
+    #[ignore] // corpus-gated: --release --locked g23_h_holdouts -- --ignored --nocapture
+    fn g23_h_holdouts_and_throughput() {
+        use std::time::Instant;
+        let holds: [(&str, &str); 2] = [
+            // independent holdout: park_wind is NOT part of the frozen
+            // reconciliation table; park_wind16.wav (tracked) is its
+            // deterministic 16-bit derivative (first 8.0 s, 24→16-bit via
+            // >>8 top bytes, 48 kHz stereo; regenerate with
+            // scripts/g23_holdout.py, 1,536,044 B committed)
+            ("park_wind_holdout", "testdata/holdouts/park_wind16.wav"),
+            ("example_word_full_stereo", "testdata/g5f/example_word.wav"),
+        ];
+        for (name, path) in holds {
+            let data = std::fs::read(path).expect("corpus (run the fetch scripts)");
+            let (rate, streams) = crate::parse_wav_multichannel(&data).expect("parse");
+            drop(data);
+            assert_eq!(streams.len(), 2, "{name}: stereo holdout");
+            let v7 = (crate::serialize(crate::choose_model(&streams[0]), rate, &streams[0])
+                .map(|p| p.len())
+                .unwrap()
+                + crate::serialize(crate::choose_model(&streams[1]), rate, &streams[1])
+                    .unwrap()
+                    .len()) as f64;
+            for (profile, pname) in [
+                (crate::V8Profile::Balanced, "Balanced"),
+                (crate::V8Profile::Maximum, "Maximum"),
+            ] {
+                let t0 = Instant::now();
+                let frame = crate::encode_v8_select(rate, &streams[0], &streams[1], profile)
+                    .unwrap_or_else(|e| panic!("{name} {pname}: {e}"));
+                let enc_ms = t0.elapsed().as_millis();
+                let t1 = Instant::now();
+                let (drate, channels) =
+                    crate::decode_v8(&frame).unwrap_or_else(|e| panic!("{name} {pname} dec: {e}"));
+                let dec_ms = t1.elapsed().as_millis();
+                assert_eq!(drate, rate, "{name}: rate");
+                assert_eq!(channels[0], streams[0], "{name}: exact L");
+                assert_eq!(channels[1], streams[1], "{name}: exact R");
+                let samples = streams[0].len() as f64;
+                let pcm_mib = samples * 2.0 * 2.0 / 1_048_576.0;
+                let enc_mbs = pcm_mib / (enc_ms as f64 / 1000.0);
+                let dec_mbs = pcm_mib / (dec_ms as f64 / 1000.0);
+                println!(
+                    "HOLDOUT {name} {pname}: {len} B (v7 components {v7:.0} B = {:.1}%), enc {enc_ms} ms ({enc_mbs:.0} MiB/s), dec {dec_ms} ms ({dec_mbs:.0} MiB/s)",
+                    frame.len() as f64 / v7 * 100.0,
+                    len = frame.len(),
+                    v7 = v7
+                );
+            }
+        }
+    }
 }
