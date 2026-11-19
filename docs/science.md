@@ -1530,6 +1530,80 @@ the corner-i16 fixtures), RAW's R0 span semantics, and the empty-Rice-body
 canonical case. Peak RSS for the whole six-class sweep: 7.63 GB — the M3
 scratch-reuse slice targets the PERIOD/OP transient pool (§8.27).
 
+### 8.29 G23-M/E/F/H — scratch reuse, permanent goldens, the security battery, and the release probes
+
+**G23-M (M3 scratch workspaces).** The §8.27 attribution's fresh-path
+baselines held (isolated-family probes re-run pre-M3: dense +618 MB,
+PERIOD +6,621 MB, OP +6,275 MB, OSC +47 MB). The `SweepScratch`
+implementation mirrors the PERIOD planner and all three OP planners
+(loop/echo/scale — the echo arm re-sweeps 64 delays) into reusable
+same-shape workspaces; `choose_model_with` and the v8 selection's
+scratch meter (`payload_len_into`) ride one workspace per sweep.
+Invariants: the mirror battery bills every PERIOD lag and OP arm
+identically from scratch and fresh, and `choose_model` is invariant to
+scratch reuse; the whole reconciliation gate re-asserts the frozen wire
+byte-for-byte: the post-M3 sweep reproduced the ENTIRE §8.28 table
+(all 12 rows identical to the pre-M3 run — byte identity proven
+end-to-end). Allocation counts on the combined 4×(95-lag PERIOD +
+16-arm OP) sweep: **fresh 16,188 vs scratch 56** (a 289× reduction;
+`m3_scratch_reduces_allocation_counts` asserts ≥2×).
+
+The measured M3 verdict: peak RSS for the full six-class
+reconciliation gate fell **7.10 GB → 5.62 GB (−1.48 GB, −20.9%)** and
+wall time 9,611 s → 7,794 s (−19%; the reused workspaces also cut
+allocator traffic). The 4 GB initial target is NOT met by M3 alone:
+the residual is dominated by the fixtures' own PCM plus the Rice/model
+buffers and the harness's all-six-classes assembly (the isolated-family
+attribution mechanism — the varying-size transient pool — is
+ELIMINATED: the sweeps now hold one workspace each). Per the G23-M
+disposition rule the measured limitation is recorded rather than
+delayed: the published resource statement for 0.12.0 reports the
+measured gate ceiling (5.62 GB for the all-six-classes qualification
+harness, which upper-bounds single-recording encodes) and flags
+isolated per-profile RSS probes as the follow-up that would set tighter
+per-profile numbers.
+
+**G23-E (permanent golden vectors).** 21 fixtures in `src/golden.rs` +
+`src/golden_table.rs` (~128 KB): all nine kinds mono, the D1–D5 ladder
+under R0/R1/R2, Rice escape/block-boundary/empty-body cases, extreme
+corner PCM, degenerate 1/4-sample streams, C0–C3 stereo with mixed
+backends and the mixed-MODEL stream. Each carries the exact wire bytes,
+wire + decoded-PCM SHA-256 digests, embedded model/geometry/backend
+identifiers (walked from the wire and asserted), and the exact
+serialized length. SHA-256 is implemented in-tree (std-only). The
+historical pin: v7 decodes; v4/v5 version bytes reject (the
+single-version-release advancement). Goldens decouple decoding from
+encoder selection by construction (the fixture spec is explicit).
+
+**G23-F (the decode-side security battery).** Three families over the
+COMPLETE `decode_v8` path — exhaustive single-bit mutation (7,256 +
+6,872 cases over two representative fixtures), the 4,000-round
+deterministic structured fuzzer over the whole golden corpus (LCG,
+seeds SEED_A/SEED_B recorded), truncation sweeps, and an always-on
+300-round smoke on BOTH builds. Recorded limitation: the in-process
+fuzzer is NOT coverage-guided and does not instrument coverage; the
+harness is fixture-compatible with a libFuzzer swap. No panics in
+either build (debug overflow panics exercised). **The fuzzer caught one
+real defect: the side-stack parity plane sat outside the component
+bounds check — a mutated frame could slice the plane past the payload
+end.** Fixed with fully checked arithmetic over body_end/frame_end
+(incl. the fields-walk ordering); the battery went green immediately
+after.
+
+**G23-H probes.** Holdouts: `park_wind16.wav` (the committed 8.0 s
+16-bit derivative of the never-referenced 24-bit 48 kHz park_wind; the
+derivation script `scripts/g23_holdout.py`) is compression-hard by
+construction — RAW selected, 98.2% of the v7 components (1,536,036 →
+1,507,989 B), bit-exact both profiles; the example_word FULL stereo
+(the reference measured ch0 alone) 53.8% (111,429 → 59,932 B),
+bit-exact both profiles. Throughput (enumeration-dominated): park wind
+Balanced 21.1 s / Maximum 68.3 s for 7.3 MiB PCM, decode 92 MiB/s;
+example_word decode 148 MiB/s. Cross-architecture: the crate and
+binary cross-compile clean for x86_64-apple-darwin (release);
+RUN-TIME golden verification requires Rosetta on this machine (not
+installed) or a consumer on another arch — the exact command is
+documented in the release notes for the user-run gate.
+
 ## 9. Standing principles (the honest-results contract)
 
 1. Complete accounting, always: fields, masks, deltas, headers; selection
