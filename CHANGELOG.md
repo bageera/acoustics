@@ -3,9 +3,15 @@
 All notable changes to ACOUSTICS are documented here.
 Format based on Keep a Changelog; versioning is SemVer.
 
-## [0.12.0] — Unreleased (qualified; publication held for explicit authorization)
+## [0.12.0] — 2026-11-19
 
 ### Integrated (production, the wire v8 release)
+
+- **Published to crates.io as manifold-acoustics 0.12.0 (2026-11-19)** —
+  verified three ways: registry read-back (`max_version` = 0.12.0, 51-file
+  4.3MiB package @ 7e95b3c), a fresh /tmp consumer smoke over the registry
+  pull path (exact 4096-sample decode roundtrip; OSC variant 3 selected),
+  and the full local suite (116 passed / 0 failed / 33 ignored, EXIT 0).
 
 - **Integrated wire v8** — the production frame format (`decode_v8()`/
   `encode_v8_select[_mono]`, `src/rice.rs`, `docs/wire-v8.md` @ the frozen
