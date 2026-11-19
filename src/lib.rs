@@ -44,6 +44,14 @@ pub mod g8;
 #[cfg(test)]
 pub(crate) mod g9;
 
+/// G23-E — permanent golden vectors (wire v8 + the historical pin).
+#[cfg(test)]
+pub(crate) mod golden;
+
+/// G23-F — the final decode-side security battery.
+#[cfg(test)]
+pub(crate) mod sec_battery;
+
 /// G10 research (uniform mask representation) — research-only.
 #[cfg(test)]
 pub(crate) mod g10;
@@ -1355,6 +1363,14 @@ fn serialize_osc(variant: usize, out: &mut Vec<u8>, samples: &[i16]) -> Result<(
 }
 
 fn choose_model(samples: &[i16]) -> Model {
+    choose_model_with(samples, &mut SweepScratch::default())
+}
+
+/// `choose_model` over a REUSED scratch workspace (G23-M / M3): the sweep
+/// billing rides reusable workspaces; the selection arithmetic is
+/// byte-identical to `choose_model` (asserted by the mirror battery and
+/// every pinned wire floor).
+fn choose_model_with(samples: &[i16], sc: &mut SweepScratch) -> Model {
     let mut best_len = payload_len(MODEL_RAW, 0, samples).unwrap_or(usize::MAX);
     let mut best = Model {
         kind: MODEL_RAW,
@@ -1370,7 +1386,7 @@ fn choose_model(samples: &[i16]) -> Model {
     }
     // dense lag sweep covers any periodicity up to 96 samples (~735 Hz @ 44.1 kHz)
     for lag in 2..=96usize {
-        if let Some(n) = payload_len(MODEL_PERIOD, lag, samples) {
+        if let Some(n) = period_payload_len_into(samples, lag, sc) {
             if n < best_len {
                 best = Model {
                     kind: MODEL_PERIOD,
@@ -1394,13 +1410,16 @@ fn choose_model(samples: &[i16]) -> Model {
     // pre-dimensionality battery (v0.7, science.md §8): simple discrete
     // operations first; buy dimensionality only when every simple op loses.
     for op in 0..OP_ARM_COUNT {
-        if let Some(n) = op_payload_len(samples, op) {
-            if n < best_len {
-                best = Model {
-                    kind: MODEL_OP,
-                    param: op,
-                };
-                best_len = n;
+        if samples.len() >= 2 {
+            if let Some(cost) = op_plan_into(samples, op, sc) {
+                let n = varint_len(op as u64) + cost;
+                if n < best_len {
+                    best = Model {
+                        kind: MODEL_OP,
+                        param: op,
+                    };
+                    best_len = n;
+                }
             }
         }
     }
@@ -2006,6 +2025,225 @@ pub(crate) fn plan_corrections_masked_op(r: &[i64]) -> (Vec<u32>, Vec<i64>) {
     (masks, deltas)
 }
 
+// ---- G23-M / M3: reusable sweep scratch workspaces ----
+//
+// The isolated-family memory probes (docs/science.md §8.27) put the
+// retained-pool growth in the PERIOD (95 lags) and OP (loop/echo/scale
+// sweeps; the echo arm re-sweeps 64 delays internally) sweeps: every
+// planning pass allocated fresh, VARYING-size transient vectors, so the
+// allocator accumulated freed-but-cached size classes across the sweep.
+// The *_into variants mirror each planner's arithmetic EXACTLY into
+// reusable same-shape workspaces — identical outputs and tie-breaking;
+// the retained plan materializes once, through the same clone-on-improve
+// the original performed.
+
+#[derive(Default)]
+pub(crate) struct SweepScratch {
+    period_res: Vec<i64>,
+    period_masks: Vec<u32>,
+    op_x: Vec<i64>,
+    op_y: Vec<i64>,
+    op_r: Vec<i64>,
+    op_masks: Vec<u32>,
+    op_deltas: Vec<i64>,
+    op_base: Vec<i16>,
+    best_masks: Vec<u32>,
+    best_deltas: Vec<i64>,
+    best_base: Vec<i16>,
+}
+
+fn corrections_into(masks: &mut Vec<u32>, deltas: &mut Vec<i64>, r: &[i64]) {
+    masks.clear();
+    masks.resize(r.len().div_ceil(32), 0);
+    deltas.clear();
+    for (i, &d) in r.iter().enumerate() {
+        if d != 0 {
+            masks[i / 32] |= 1 << (i % 32);
+            deltas.push(d);
+        }
+    }
+}
+
+fn period_plan_into<'a>(
+    samples: &[i16],
+    lag: usize,
+    sc: &'a mut SweepScratch,
+) -> Option<(&'a [i64], &'a [u32])> {
+    if lag == 0 || lag >= samples.len() {
+        return None;
+    }
+    let tail = samples.len() - lag;
+    sc.period_res.clear();
+    sc.period_res.reserve(samples.len());
+    for &s in &samples[..lag] {
+        sc.period_res.push(s as i64);
+    }
+    sc.period_masks.clear();
+    sc.period_masks.resize(tail.div_ceil(32), 0);
+    for i in lag..samples.len() {
+        let residual = samples[i] as i64 - samples[i - lag] as i64;
+        if residual != 0 {
+            sc.period_masks[(i - lag) / 32] |= 1 << ((i - lag) % 32);
+        }
+        sc.period_res.push(residual);
+    }
+    Some((&sc.period_res, &sc.period_masks))
+}
+
+/// Exact counterpart of `period_payload_len`, billed from the scratch.
+fn period_payload_len_into(samples: &[i16], lag: usize, sc: &mut SweepScratch) -> Option<usize> {
+    let (residuals, masks) = period_plan_into(samples, lag, sc)?;
+    let head_bytes = samples[..lag]
+        .iter()
+        .map(|&s| varint_len(zigzag_encode(s as i64)))
+        .sum::<usize>();
+    let tail_bytes = varint_sum(residuals[lag..].iter().filter(|&&r| r != 0));
+    Some(
+        header_len(samples.len())
+            + varint_len(lag as u64)
+            + mask_adaptive_cost(masks)
+            + head_bytes
+            + tail_bytes,
+    )
+}
+
+/// Exact counterpart of `loop_plan` from the scratch.
+fn loop_plan_into(samples: &[i16], period_len: usize, sc: &mut SweepScratch) -> Option<usize> {
+    let n = samples.len();
+    if period_len == 0 || period_len >= n {
+        return None;
+    }
+    sc.op_base.clear();
+    sc.op_base.extend_from_slice(&samples[..period_len]);
+    sc.op_r.clear();
+    for (i, &s) in samples.iter().enumerate() {
+        sc.op_r.push(s as i64 - sc.op_base[i % period_len] as i64);
+    }
+    corrections_into(&mut sc.op_masks, &mut sc.op_deltas, &sc.op_r);
+    let cost = header_len(n)
+        + varint_len(period_len as u64)
+        + sc.op_base
+            .iter()
+            .map(|&s| varint_len(zigzag_encode(s as i64)))
+            .sum::<usize>()
+        + mask_rle_wire_len(&sc.op_masks)
+        + deltas_bytes(&sc.op_deltas);
+    Some(cost)
+}
+
+/// Exact counterpart of `echo_plan` from the scratch: the retained best
+/// delay materializes its plan through the same clone-on-improve shape.
+fn echo_plan_into(samples: &[i16], gsel: usize, sc: &mut SweepScratch) -> Option<usize> {
+    let g = OP_GAINS[gsel];
+    let n = samples.len();
+    if n == 0 {
+        return None;
+    }
+    sc.op_x.clear();
+    for &s in samples {
+        sc.op_x.push(s as i64);
+    }
+    let mut best: Option<(usize, usize)> = None; // (cost, delay)
+    for d_run in 1..=64usize {
+        if d_run >= n {
+            break;
+        }
+        sc.op_y.clear();
+        sc.op_y.resize(n, 0);
+        for i in 0..n {
+            let e = if i >= d_run {
+                (sc.op_y[i - d_run] * g) >> 15
+            } else {
+                0
+            };
+            sc.op_y[i] = sc.op_x[i] - e;
+        }
+        for v in sc.op_y.iter_mut() {
+            *v = (*v).clamp(i16::MIN as i64, i16::MAX as i64);
+        }
+        sc.op_r.clear();
+        for i in 0..n {
+            let e = if i >= d_run {
+                (sc.op_y[i - d_run] * g) >> 15
+            } else {
+                0
+            };
+            sc.op_r.push(sc.op_x[i] - (sc.op_y[i] + e));
+        }
+        corrections_into(&mut sc.op_masks, &mut sc.op_deltas, &sc.op_r);
+        let y_bytes: usize = sc.op_y.iter().map(|&v| varint_len(zigzag_encode(v))).sum();
+        let cost = header_len(n)
+            + varint_len(d_run as u64)
+            + varint_len(n as u64)
+            + y_bytes
+            + mask_rle_wire_len(&sc.op_masks)
+            + deltas_bytes(&sc.op_deltas);
+        if best.as_ref().is_none_or(|p| cost < p.0) {
+            best = Some((cost, d_run));
+            // retain the improvement's exact data (the original cloned too)
+            sc.best_masks.clone_from(&sc.op_masks);
+            sc.best_deltas.clone_from(&sc.op_deltas);
+            sc.best_base.clear();
+            sc.best_base.extend(sc.op_y.iter().map(|&v| v as i16));
+        }
+    }
+    best.map(|(cost, _)| cost)
+}
+
+/// Exact counterpart of `scale_plan` from the scratch.
+fn scale_plan_into(samples: &[i16], gsel: usize, sc: &mut SweepScratch) -> Option<usize> {
+    let g = OP_GAINS[gsel] * 2;
+    if g <= OSC_Q15 {
+        return None;
+    }
+    let n = samples.len();
+    sc.op_x.clear();
+    for &s in samples {
+        sc.op_x.push(s as i64);
+    }
+    sc.op_y.clear();
+    sc.op_y
+        .extend(sc.op_x.iter().map(|&v| (v * OSC_Q15).div_euclid(g)));
+    sc.op_r.clear();
+    for (i, &x) in sc.op_x.iter().enumerate() {
+        sc.op_r.push(x - ((sc.op_y[i] * g) >> 15));
+    }
+    corrections_into(&mut sc.op_masks, &mut sc.op_deltas, &sc.op_r);
+    let y_bytes: usize = sc.op_y.iter().map(|&v| varint_len(zigzag_encode(v))).sum();
+    Some(header_len(n) + y_bytes + mask_rle_wire_len(&sc.op_masks) + deltas_bytes(&sc.op_deltas))
+}
+
+/// Exact counterpart of `op_plan` from the scratch: returns the arm's
+/// serialized COST (the caller bills the arm-id varint separately).
+fn op_plan_into(samples: &[i16], op: usize, sc: &mut SweepScratch) -> Option<usize> {
+    match op {
+        0..=9 => loop_plan_into(samples, OP_LOOPS[op], sc),
+        10..=13 => echo_plan_into(samples, op - 10, sc),
+        14..=15 => scale_plan_into(samples, op - 14, sc),
+        _ => None,
+    }
+}
+
+/// The per-kind cost meter over the scratch workspace: PERIOD and OP ride
+/// the reuse; other kinds delegate to the certified meters unchanged.
+fn payload_len_into(
+    kind: u8,
+    param: usize,
+    samples: &[i16],
+    sc: &mut SweepScratch,
+) -> Option<usize> {
+    match kind {
+        MODEL_PERIOD => period_payload_len_into(samples, param, sc),
+        MODEL_OP => {
+            if samples.len() < 2 {
+                return None;
+            }
+            Some(varint_len(param as u64) + op_plan_into(samples, param, sc)?)
+        }
+        _ => payload_len(kind, param, samples),
+    }
+}
+
 fn echo_plan(samples: &[i16], gsel: usize) -> Option<OpPlan> {
     // x[n] = y[n] + (g*y[n-D]) >> 15, D swept 1..=64 at this gain; y comes from the
     // exact causal inverse recursion y[n] = x[n] - (g*y[n-D])>>15. The decoder
@@ -2589,7 +2827,18 @@ fn v8_component_decode(
     let backend_at = (*pos)
         .checked_add(fields_len)
         .ok_or_else(|| ERR_TRUNCATED.to_string())?;
-    if backend_at + 1 + body_len > payload.len() {
+    if *pos > backend_at {
+        return Err(ERR_TRUNCATED.to_string());
+    }
+    // full-frame bounds: the body AND the trailing parity plane must fit
+    let body_end = backend_at
+        .checked_add(1)
+        .and_then(|b| b.checked_add(body_len))
+        .ok_or_else(|| ERR_TRUNCATED.to_string())?;
+    let frame_end = body_end
+        .checked_add(plane_len)
+        .ok_or_else(|| ERR_TRUNCATED.to_string())?;
+    if frame_end > payload.len() {
         return Err(ERR_TRUNCATED.to_string());
     }
     let backend = payload[backend_at];
@@ -2597,13 +2846,13 @@ fn v8_component_decode(
         return Err(format!("invalid backend byte {backend}"));
     }
     let fields = payload[*pos..backend_at].to_vec();
-    let body = payload[backend_at + 1..backend_at + 1 + body_len].to_vec();
+    let body = payload[backend_at + 1..body_end].to_vec();
     let plane: Vec<u8> = if side {
-        payload[backend_at + 1 + body_len..backend_at + 1 + body_len + plane_len].to_vec()
+        payload[body_end..frame_end].to_vec()
     } else {
         Vec::new()
     };
-    *pos = backend_at + 1 + body_len + plane_len;
+    *pos = frame_end;
     // residual section reconciliation: R0 bodies are exactly res_span
     // bytes; Rice bodies must decode to exactly res_span bytes of varints
     let stream: Vec<u8> = match backend {
@@ -2763,12 +3012,13 @@ fn v8_pick_stream(
     frozen: Model,
     profile: V8Profile,
 ) -> Result<ComponentSpec, String> {
+    let mut sc = SweepScratch::default();
     let mut consider: Vec<ComponentSpec> = Vec::new();
     // inapplicable candidates (model fits that legitimately reject
     // on a stream) are SKIPPED, never artificially expanded: the
     // meter's ERR_TRUNCATED is a bug, not a filter
     let mut push = |kind: u8, param: usize| {
-        if payload_len(kind, param, samples).is_some() {
+        if payload_len_into(kind, param, samples, &mut sc).is_some() {
             for backend in [V8_BACKEND_R0, V8_BACKEND_R1, V8_BACKEND_R2] {
                 consider.push(v8_spec(kind, param, backend));
             }
@@ -2795,7 +3045,7 @@ fn v8_pick_stream(
             // + the frozen baseline; final picks via the exact meter
             let mut ranked: Vec<(usize, u8, usize)> = Vec::new();
             for lag in 2..=96usize {
-                if let Some(len) = payload_len(MODEL_PERIOD, lag, samples) {
+                if let Some(len) = payload_len_into(MODEL_PERIOD, lag, samples, &mut sc) {
                     ranked.push((len, MODEL_PERIOD, lag));
                 }
             }
@@ -2805,7 +3055,7 @@ fn v8_pick_stream(
                 }
             }
             for op in 0..OP_ARM_COUNT {
-                if let Some(len) = payload_len(MODEL_OP, op, samples) {
+                if let Some(len) = payload_len_into(MODEL_OP, op, samples, &mut sc) {
                     ranked.push((len, MODEL_OP, op));
                 }
             }
@@ -3193,10 +3443,164 @@ pub fn arm_costs(samples: &[i16]) -> (usize, usize, usize, usize) {
     (a, b, c, d)
 }
 
+/// The G23-M / M3 allocation counter: a thread-local counter wrapped in
+/// the test-registered global allocator, so tests can measure how many
+/// allocations a code path performs on its own thread.
+#[cfg(test)]
+mod alloc_meter {
+    use std::alloc::{GlobalAlloc, Layout};
+    use std::cell::Cell;
+
+    pub struct CountingAlloc;
+    thread_local! {
+        pub static COUNT: Cell<usize> = const { Cell::new(0) };
+    }
+
+    unsafe impl GlobalAlloc for CountingAlloc {
+        unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+            COUNT.with(|c| c.set(c.get() + 1));
+            unsafe { std::alloc::System.alloc(layout) }
+        }
+        unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+            unsafe { std::alloc::System.dealloc(ptr, layout) };
+        }
+        unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
+            COUNT.with(|c| c.set(c.get() + 1));
+            unsafe { std::alloc::System.realloc(ptr, layout, new_size) }
+        }
+    }
+
+    pub fn reset() {
+        COUNT.with(|c| c.set(0));
+    }
+    pub fn get() -> usize {
+        COUNT.with(|c| c.get())
+    }
+}
+
+#[cfg(test)]
+#[global_allocator]
+static M3_COUNTING_ALLOC: alloc_meter::CountingAlloc = alloc_meter::CountingAlloc;
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::masks_rle::{MASK_SEL_FIXED, MASK_SEL_RLE};
+
+    /// G23-M / M3: the scratch must measurably REDUCE allocation counts on
+    /// the PERIOD (95-lag) and OP (echo × 64-delay) sweeps while billing
+    /// and selecting identically. Fresh-vs-scratch on the same fixture.
+    #[test]
+    fn m3_scratch_reduces_allocation_counts() {
+        let n = 20_000usize;
+        let samples: Vec<i16> = (0..n)
+            .map(|i| {
+                let slow = (((i * 977) % 44_100) as f32 / 4_410.0).sin() * 40_000.0;
+                let fast = (((i * 3_760) % 44_100) as f32 / 44.1).sin() * 2_000.0;
+                (slow + fast) as i16
+            })
+            .collect();
+
+        // the certified fresh-buffer sweep: allocate-heavy by design
+        for _ in 0..4 {
+            for lag in 2..=96usize {
+                payload_len(MODEL_PERIOD, lag, &samples);
+            }
+            for op in 0..OP_ARM_COUNT {
+                op_payload_len(&samples, op);
+            }
+        }
+
+        // the scratch sweep: same work over one reusable workspace
+        alloc_meter::reset();
+        let mut sc = SweepScratch::default();
+        for _ in 0..4 {
+            for lag in 2..=96usize {
+                period_payload_len_into(&samples, lag, &mut sc);
+            }
+            for op in 0..OP_ARM_COUNT {
+                op_plan_into(&samples, op, &mut sc);
+            }
+        }
+        let scratch_allocs = alloc_meter::get();
+
+        // count the fresh path for the same workload
+        alloc_meter::reset();
+        for _ in 0..4 {
+            for lag in 2..=96usize {
+                payload_len(MODEL_PERIOD, lag, &samples);
+            }
+            for op in 0..OP_ARM_COUNT {
+                op_payload_len(&samples, op);
+            }
+        }
+        let fresh_allocs = alloc_meter::get();
+
+        println!("M3-ALLOC fresh={fresh_allocs} scratch={scratch_allocs}");
+        assert!(
+            scratch_allocs < fresh_allocs / 2,
+            "scratch should cut allocations: fresh {fresh_allocs} vs scratch {scratch_allocs}"
+        );
+    }
+
+    /// G23-M / M3 mirror battery: the scratch-carrying meters must bill
+    /// IDENTICALLY to the certified fresh-buffer meters on every arm, and
+    /// `choose_model` must be invariant to scratch reuse (identical
+    /// selection arithmetic, identical tie-breaking).
+    #[test]
+    fn m3_scratch_meter_mirrors_the_certified_meter() {
+        // sine at multiple lags (exercises PERIOD heavily), echo, noise,
+        // a short degenerate stream, and an empty one
+        let n = 1_200usize;
+        let sine: Vec<i16> = (0..n)
+            .map(|i| {
+                ((i * 3_760 / 1_000 % 360) as f32)
+                    .sin()
+                    .mul_add(8_000.0, 0.0) as i16
+            })
+            .collect();
+        let echo: Vec<i16> = (0..n)
+            .map(|i| {
+                let s = ((i * 3_760 / 1_000 % 360) as f32).sin() * 6_000.0;
+                let d = if i >= 37 {
+                    sine[i - 37] as f32 * 0.55
+                } else {
+                    0.0
+                };
+                (s + d) as i16
+            })
+            .collect();
+        let noise: Vec<i16> = (0..n)
+            .map(|i| ((i * 26_544_357) >> 13) as i64 as i16)
+            .collect();
+        let short: Vec<i16> = vec![5, -2, 7, 1, -9, 3, 4, -1];
+        let cases: [&[i16]; 5] = [&sine, &echo, &noise, &short, &[]];
+        let mut sc = SweepScratch::default();
+        for s in cases {
+            for lag in 2..=96usize {
+                assert_eq!(
+                    payload_len_into(MODEL_PERIOD, lag, s, &mut sc),
+                    payload_len(MODEL_PERIOD, lag, s),
+                    "PERIOD lag {lag} mirror on {} samples",
+                    s.len()
+                );
+            }
+            for op in 0..OP_ARM_COUNT {
+                assert_eq!(
+                    payload_len_into(MODEL_OP, op, s, &mut sc),
+                    op_payload_len(s, op),
+                    "OP arm {op} mirror on {} samples",
+                    s.len()
+                );
+            }
+            // the selection itself must be scratch-invariant
+            assert_eq!(choose_model_with(s, &mut sc), choose_model(s));
+            assert_eq!(
+                choose_model_with(s, &mut sc),
+                choose_model_with(s, &mut SweepScratch::default())
+            );
+        }
+    }
     use crate::research;
 
     // ---------- G23-B2/C: the v8 frame battery ----------
