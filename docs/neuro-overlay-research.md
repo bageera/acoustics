@@ -87,3 +87,52 @@ failure case (15/15 rows on `python3 scripts/neuro/n19_instrument.py`).
 
 Delivery-mechanism comparison (measured in N20): additive rendering,
 amplitude modulation of an audible carrier, binaural offsetting.
+
+---
+
+## N20 — Modulation recovery and mathematical fidelity
+
+**Study**: `scripts/neuro/n20_recovery.py`. Every arm is rendered THROUGH the
+real 16-bit PCM medium (i16 quantization + dequantization) and recovered with
+ONLY the N19 instrument's detectors — the generators' state is never consulted.
+Build fixture: 48 kHz / 65536 samples / phases 0.0 / depth 0.5. Held-out
+fixture: 44.1 kHz / different phases (0.17, 0.41) / depth 0.35. Tolerances
+pre-declared before the held-out run: frequency ±0.25 Hz (gamma) and ±0.3 Hz
+(theta envelope), depth ±0.05, phase ±0.05 turns.
+
+| arm | descriptor (candidate layout) | build | holdout | disposition |
+|---|---|---|---|---|
+| pure gamma | 35 B | PASS | PASS | control |
+| pure theta | 35 B | PASS | PASS | control |
+| independent gamma+theta (two streams) | **54 B** | PASS | PASS | supported — matches the historical comparator's scale |
+| **theta-AM gamma (one stream)** | **43 B** | **depth err 0.0000, phase err 0.0000, both freqs exact** | **depth err 0.0000, phase err 0.0000** | **SELECTED as the production candidate** |
+| theta-phase-coupled gamma (PM) | 43 B | FAIL — the carrier line displaces by 17.6 Hz (β = 0.75 rad), the envelope stays constant, no recoverable theta line | FAIL | **REJECTED** — unrecoverable by the standard envelope demodulator; the simpler AM control wins on every metric |
+| fixed audible carrier (440 Hz), theta-AM | 43 B | depth err 0.0000 | depth err 0.0000 | supported delivery alternative (overlay on an audible carrier rather than on program audio) |
+| binaural offset pair | 86 B (two descriptors) | per-channel envelope theta depth 0.0001 | 0.0002 | control: NO physical modulation exists on the wire — binaural beats are a listener-side interaction, not a signal property. Delivered only as an opt-in playback render, never mixed into archival PCM |
+
+**Adaptive carriers (static/dynamic): EXCLUDED without a rendered arm.** No
+pre-existing evidence justifies them; the promotion policy requires an
+adaptive arm to beat its fixed control on pre-declared metrics before
+inclusion. The fixed-carrier control recovered depth to 0.0000 error, which
+an adaptive schedule must first beat.
+
+**Detector-artifact rejections recorded (the study's honesty checks):**
+- The first AM render clipped: peak = amp×(1+depth) = 48000 > 32767, and the
+  clipped envelope measured depth 0.394 instead of 0.500. Rendering must
+  budget headroom as amp/(1+depth); **the descriptor's amplitude contract
+  must therefore account for peak = amplitude×(1+depth)** (carried into N23).
+- The recovered theta phase equals the generator phase minus 0.25 turns
+  (the sin-render/cos-probe convention); the spec pins the convention
+  explicitly rather than leaving it implicit.
+
+**Byte costs (candidate fixed-width LE layout: id u8, version u8, model u8,
+carrier u32 @0.01 Hz, phase u16 Q16, amp u16 Q15, mod-freq u32 @0.01 Hz,
+mod-depth u16 Q16, mod-phase u16 Q16, start u64, duration u64, routing u8,
+coupling-ref u8, length u32, crc-16):** bare tone 35 B; one scheduled stream 43 B
+(with the 8+8 B schedule always present for the production grammar); the
+uncoupled TWO-stream schedule costs 54 B — the historical 54-byte comparator
+was measuring exactly this two-stream scale. The comparison is billed
+per-stream: the SELECTED arm bills 43 B/stream.
+
+**Exit gate: PASS** — theta-AM gamma passes signal-domain recovery on both
+fixtures independently of the generating instrument.
