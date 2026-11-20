@@ -136,3 +136,57 @@ per-stream: the SELECTED arm bills 43 B/stream.
 
 **Exit gate: PASS** — theta-AM gamma passes signal-domain recovery on both
 fixtures independently of the generating instrument.
+
+---
+
+## N21 — Real-audio corpus and holdout evaluation
+
+**Study**: `scripts/neuro/n21_corpus.py`. 11 fixtures spanning the required
+classes; every source hash-recorded (sha256 prefix printed per row); the
+overlay = the N20-selected theta-AM gamma (depth 0.5) at the pre-declared
+amplitude (peak 0.25 FS), mixed under the explicit headroom policy
+(ceiling 0.98; the overlay amplitude is reduced or omitted when the program
+leaves no room — no automatic gain escalation). HOLDOUTS (measured once, no
+tuning): `bass_river` (park_river.wav, CC0 hash-locked) and the synthetic
+percussive fixture. Development/holdout separation is trivially clean because
+nothing is tuned anywhere — the overlay is fixed-parameter by design, and the
+recovery tolerances were frozen in N20 before any N21 run.
+
+**Measured per fixture** (source hash, 48 kHz, first 65536 samples, mixed
+signal, N19/N20 detectors):
+
+| class | overlay amp | recovered depth (% of expected) | envelope SNR | peak prog→mix | verdict |
+|---|---|---|---|---|---|
+| silence (synthetic) | 0.250 | 100.0% | ∞ | 0.000→0.250 | succeeds |
+| pure tone 1 kHz | 0.250 | 17.0% | 134.6 | 0.500→0.750 | **fails** |
+| harmonic mixture | 0.250 | 36.2% | 3.9 | 0.569→0.816 | **fails** |
+| speech (stereo ch0) | 0.250 | 99.2% | 132.6 | 0.198→0.406 | succeeds |
+| speech (mono) | 0.250 | 84.4% | 59.5 | 0.420→0.590 | succeeds |
+| solo piano (ch0) | 0.250 | 62.3% | 12.5 | 0.466→0.617 | succeeds |
+| sparse birds (ch0) | 0.250 | 99.2% | 1554.9 | 0.025→0.260 | succeeds |
+| bass river (ch0) HOLDOUT | 0.250 | 100.0% | 430.5 | 0.030→0.265 | succeeds |
+| percussive HOLDOUT | 0.168 | 100.7% | 95.3 | 0.728→0.813 | succeeds |
+| high-dynamic-range | 0.020 | 12.1% | 1.2 | 0.950→0.970 | **fails** |
+| near-full-scale | 0.000 | — | — | 0.980→0.980 | **refused by policy** (no headroom; 0 clipped samples) |
+
+**Physics of the class map** (recorded as the study's finding): on
+narrowband-dominated programs the analytic magnitude is owned by the masker;
+the smaller AM component's theta line appears scaled by the carrier magnitude
+ratio, so recovery degrades to 12–36% on tones, harmonic mixtures, and
+DR-switching material. Broadband/sparse/speech/percussive programs leave the
+envelope's theta line intact (84–101%). The failing classes are permanent
+negative results of this representation, not detector artifacts — the same
+detector reads 99–101% on the sparse fixtures.
+
+**Wire accounting (kept separate from overlay quality)**: the descriptor adds
+43 B/stream (A0-sidecar accounting); the archival bytes never change
+(archival exactness is VERIFIED by re-hashing every source file after the
+run — zero violations). The CLI v8-encode column was corrected (`acoustics
+benchmark <in> <out>`; stereo sources are outside the CLI's mono contract and
+are accounted ch0-only, as in G23-G). Compression results and overlay signal
+quality live in separate columns throughout; adding auxiliary information is
+recorded as a descriptor cost, never as a compression improvement.
+
+**Exit gate: PASS** — original PCM exact on every accepted fixture
+(verified by post-run re-hashing) and the recovery results identify the
+succeeding and failing audio classes.
