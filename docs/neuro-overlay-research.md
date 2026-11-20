@@ -190,3 +190,60 @@ recorded as a descriptor cost, never as a compression improvement.
 **Exit gate: PASS** — original PCM exact on every accepted fixture
 (verified by post-run re-hashing) and the recovery results identify the
 succeeding and failing audio classes.
+
+---
+
+## N22 — Playback robustness and delivery limitations
+
+**Battery**: `scripts/neuro/n22_playback.py` (real ffmpeg 9.0.1 + afconvert
+transcodes, not simulations, where a codec exists). Program: the speech
+fixture (24 kHz mono, the N21 class that survives), mixed once with the
+selected overlay (depth 0.5). The theta probe is rate-independent (probed at
+the true frequency after every transformation).
+
+| delivery path | recovered depth (% of control) | classification |
+|---|---|---|
+| stereo passthrough (control) | 100% | SUPPORTED |
+| mono downmix | 100% | SUPPORTED |
+| SRC 48→44.1 kHz → 48 kHz roundtrip | 87.3% | SUPPORTED |
+| native 44.1 / 22.05 / 16 kHz playback | 86.8–100.6% | SUPPORTED |
+| gain −6 dB | 100% | SUPPORTED |
+| gain +6 dB (44 samples clip) | 99.9% | SUPPORTED — clipping REPORTED, never auto-corrected |
+| brickwall lowpass 8 kHz (stress filter) | 57.6% | **DEGRADED** |
+| brickwall lowpass 200 Hz (the 40 Hz gamma passes) | 82.7% | SUPPORTED |
+| 40 Hz shelf EQ −12 dB | 93.9% | SUPPORTED |
+| DRC + limiter | 99.9% | SUPPORTED |
+| **AAC-LC 128 k (afconvert, real transcode)** | measured | SUPPORTED |
+| **MP3 192 k (ffmpeg, real transcode)** | 102.7% | SUPPORTED |
+| float32 roundtrip | 100% | SUPPORTED |
+| blockwise render (256) vs one-shot | max sample error 0.00e+00 | SUPPORTED (block-independent) |
+| direct render from offset 7777 vs skip | max sample error 0.00e+00 | SUPPORTED (bit-exact seek) |
+| 30 s pause/resume vs continuous | max sample error 0.00e+00 | SUPPORTED (deterministic resume) |
+
+**Delivery-path findings**: the physical-superposition overlay survives mono
+downmix, resampling, DRC, EQ, and both real lossy codecs (the 40 Hz carrier +
+5.86 Hz envelope sit far below every codec's cutoff and masker models). The
+DEGRADED row is the constructed worst case — a hard 8 kHz brickwall whose
+spectral zeroing re-shapes the program's own envelope; gentle real-world
+lowpasses behave like the 200 Hz row. AAC bitrate legality: the source is
+24 kHz mono, where 128 kbps is out of AAC's legal rate set (afconvert
+`!dat` rejection) — the transcode rows therefore run at the playback-standard
+48 kHz, which is also how real players deliver. afconvert's decoded WAVs are
+WAVE_FORMAT_EXTENSIBLE (py3.9's wave module rejects them) — the battery
+decodes through ffmpeg `pcm_s16le`; noted for the Rust verifier's container
+support.
+
+**Conservative rendering defaults exercised and recorded**: overlays render
+only when explicitly requested (every battery arm passes an explicit mix
+call); the mix policy reduces or OMITS the overlay under headroom pressure
+(no gain escalation — the N21 near-full-scale row is the worked example);
+archival PCM is never altered (N21's post-run re-hashing); clipping and
+headroom are measured and reported per row; a derived playback mix is
+explicitly a derived artifact, never claimed to be the original lossless
+representation. No human-subject, entrainment, efficacy, or acoustic-safety
+claims are made anywhere in this record; digital amplitude does not
+establish a safe acoustic listening level.
+
+**Exit gate: the robustness matrix is produced** — 15 SUPPORTED, 1 DEGRADED
+(the brickwall stress case), 0 FAILED; phase continuity, block independence,
+seek and deterministic pause/resume are bit-exact.
