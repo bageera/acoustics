@@ -84,6 +84,16 @@ pub fn render_window(
     if (rate as u64) == 0 {
         return Err("acaux render: invalid rate".to_string());
     }
+    // N26-A: the caller's buffers must cover the whole window — a hostile
+    // (or accidental) oversized request REJECTS instead of slicing panicking
+    for c in chans.iter() {
+        if c.len() < count {
+            return Err(format!(
+                "acaux render: channel buffer {} < the requested window {count}",
+                c.len()
+            ));
+        }
+    }
     let mut audit = ClampAudit::default();
     let (first, mut second): (&mut [i16], Option<&mut [i16]>) = if chans.len() > 1 {
         let (a, b) = chans.split_at_mut(1);

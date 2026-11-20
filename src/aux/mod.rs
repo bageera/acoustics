@@ -14,7 +14,13 @@
 pub mod descriptor;
 pub mod limits;
 pub mod mix;
+
 pub mod render;
+#[cfg(test)]
+mod security;
+
+#[cfg(test)]
+mod perf;
 pub mod wire;
 
 pub use descriptor::StreamDescriptor;

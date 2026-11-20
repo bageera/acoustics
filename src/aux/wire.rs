@@ -148,11 +148,9 @@ impl AuxSpec {
             return Err(format!("acaux: primary rate {} out of bounds", rate));
         }
         for (i, s) in self.streams.iter().enumerate() {
-            let end = s.start_sample.saturating_add(s.render_end(primary_count));
-            if s.start_sample > primary_count || end > primary_count + s.render_end(primary_count) {
-                // the window itself may run to the primary's end; the START must fit
-            }
-            if s.start_sample > primary_count && !(s.duration_samples == 0) {
+            // spec §3: start_sample in 0..=primary_count — unconditionally
+            // (a duration-0 stream still may not start past the primary)
+            if s.start_sample > primary_count {
                 return Err(format!("acaux: stream {} starts past the primary", i + 1));
             }
             if s.duration_samples > MAX_DURATION_SAMPLES {

@@ -3485,7 +3485,7 @@ pub fn arm_costs(samples: &[i16]) -> (usize, usize, usize, usize) {
 /// the test-registered global allocator, so tests can measure how many
 /// allocations a code path performs on its own thread.
 #[cfg(test)]
-mod alloc_meter {
+pub(crate) mod alloc_meter {
     use std::alloc::{GlobalAlloc, Layout};
     use std::cell::Cell;
 
