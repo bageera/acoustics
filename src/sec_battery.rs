@@ -179,6 +179,24 @@ fn v8_structured_fuzzer() {
     );
 }
 
+/// The N23 compatibility probe: a valid v8 frame with APPENDED bytes must
+/// reject — the fail-closed frame termination is the measured fact that
+/// rules out transparent backward extension (architecture arm A1).
+#[test]
+fn v8_appended_descriptor_rejects() {
+    for name in ["short4_d1", "mixed_model"] {
+        let base = fix(name);
+        for n in [1usize, 16, 43, 128] {
+            let mut v = base.to_vec();
+            v.extend(std::iter::repeat_n(0u8, n));
+            assert!(
+                crate::decode_v8(&v).is_err(),
+                "{name}: a v8 frame must reject {n} appended bytes"
+            );
+        }
+    }
+}
+
 /// A truncation sweep: EVERY prefix of three fixtures must decode to
 /// Ok or Err — with canonical termination this exercises the tail checks.
 #[test]

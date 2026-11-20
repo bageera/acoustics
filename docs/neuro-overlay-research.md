@@ -247,3 +247,47 @@ establish a safe acoustic listening level.
 **Exit gate: the robustness matrix is produced** — 15 SUPPORTED, 1 DEGRADED
 (the brickwall stress case), 0 FAILED; phase continuity, block independence,
 seek and deterministic pause/resume are bit-exact.
+
+---
+
+## N23 — Mathematical Auxiliary Stream specification
+
+Deliverable: `docs/neuro-overlay-spec.md` (the freeze) + the measured
+compatibility probe.
+
+**Architecture decision (ADR, in the spec §1):**
+- **A1 REJECTED on measured evidence**: the wire v8 decoder rejects every
+  appended payload — `v8_appended_descriptor_rejects` proves 1/16/43/128
+  appended bytes fail on golden fixtures (a test committed in
+  `src/sec_battery.rs`). The fail-closed frame termination that passed the
+  G23 security gates is exactly what forbids transparent backward extension.
+  Per the gauntlet's own rule: no backward-extension compatibility is claimed.
+- **A0 (sidecar) SELECTED**: the smallest representation satisfying
+  exactness, fidelity, compatibility, resource safety and measured
+  robustness — the primary stays byte-identical (N21's verified re-hashing),
+  the descriptor adds 60 B for one stream including integrity and the
+  64-bit content binding, and a rejected sidecar can never influence PCM.
+- **A2 (new versioned container) DEFERRED**: a whole new wire release needs
+  its own golden-vector set, compatibility matrix and five-stage
+  qualification; nothing measured in N19–N22 requires single-artifact
+  distribution.
+
+**Grammar (spec §2–§3, every integrity byte billed)**: 16 B file header
+(magic/version/flags/8-byte sha-256-derived binding/count/reserved) + fixed
+38 B per stream (model/flags/carrier mHz/phase/amplitude/mod freq/depth/
+phase/start/duration/routing/coupling-ref/reserved) + file length u32 +
+CRC-16/CCITT-FALSE. One stream = 60 B; two streams = 98 B. The fail-closed
+policy rejects unknown versions, unknown flag bits, unknown models, nonzero
+reserved bytes, out-of-bounds fields, length/CRC/binding mismatch and
+trailing bytes — there is no skip-over-unknown.
+
+**Normative render (spec §4)**: pure-integer, platform-independent — 48-bit
+fixed-point phase accumulators (per stream, per rate, computed once), a
+defined 16384-entry Q14 sine table with integer linear interpolation, exact
+AM-envelope arithmetic, headroom contract (`peak = amplitude×(1+depth)`,
+billed), forward-only coupling references (cycles structurally impossible),
+and index-based random access (bit-exact seek, measured in N22).
+
+**Exit gate: PASS** — documented byte-level grammar with exact wire
+accounting, measured compatibility tests (the appended-descriptor
+rejection), and the architectural decision record.
