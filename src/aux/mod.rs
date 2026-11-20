@@ -469,4 +469,45 @@ mod tests {
             "wrong payload rejects"
         );
     }
+
+    /// N27: the permanent SIDECAR golden vectors — frozen .acaux bytes
+    /// generated through the Python reference; the renderer must reproduce
+    /// the mixed per-channel samples bit-for-bit, forever, regardless of
+    /// any future encoder or selection improvements.
+    #[test]
+    fn sidecar_golden_vectors_render_bit_exact() {
+        mod gold {
+            #![allow(non_upper_case_globals)]
+            include!("golden_sidecar.rs");
+        }
+        use gold as g;
+        // 1. both containers parse fail-closed and the sizes are the
+        //    qualified baselines
+        AuxSpec::parse(g::GOLDEN_ONE_STREAM, Some(&g::GOLDEN_ONE_SHA)).unwrap();
+        assert_eq!(g::GOLDEN_ONE_STREAM.len(), 60);
+        let two = AuxSpec::parse(g::GOLDEN_COUPLED_DUAL, Some(&g::GOLDEN_TWO_SHA)).unwrap();
+        assert_eq!(g::GOLDEN_COUPLED_DUAL.len(), 98);
+        assert_eq!(two.streams[1].coupling_ref, 1);
+        // 2. render the coupled dual and compare the mixed channels
+        let n = 1_100_000usize;
+        let mut chans = vec![vec![0i16; n], vec![0i16; n]];
+        let audit = render_window(&two, 48000, u64::MAX, 0, n, &mut chans).unwrap();
+        assert_eq!(
+            audit.clamped, 0,
+            "the golden mix renders within the container"
+        );
+        for (k, &idx) in g::GOLDEN_COUPLED_INDICES.iter().enumerate() {
+            let (want_l, want_r) = g::GOLDEN_COUPLED_EXPECTED[k];
+            assert_eq!(
+                chans[0][idx as usize],
+                want_l.clamp(i16::MIN as i64, i16::MAX as i64) as i16,
+                "golden L at {idx}"
+            );
+            assert_eq!(
+                chans[1][idx as usize],
+                want_r.clamp(i16::MIN as i64, i16::MAX as i64) as i16,
+                "golden R at {idx}"
+            );
+        }
+    }
 }

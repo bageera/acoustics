@@ -49,6 +49,23 @@ Format based on Keep a Changelog; versioning is SemVer.
   are the flagged follow-up for tighter per-profile numbers.
 
 ## [Unreleased]
+### Neuro auxiliary streams (the v8.1 research phase; feature branch `v8.1-neuro`, not merged)
+
+- **ACAUX — the mathematical auxiliary-stream sidecar**: a fail-closed
+  60/98-byte `.acaux` grammar (fixed 38 B stream descriptors, an 8-byte
+  sha-256-derived binding, CRC-16/CCITT-FALSE + declared-length integrity)
+  bound to an UNCHANGED wire v8 payload; selected architecture A0 (A1
+  appension rejected on the measured fail-closed termination, A2 deferred).
+  Pure-integer normative renderer (48-bit fixed-point phases, a defined
+  Q14 table, headroom peak = A×(1+d), forward-only coupling, bit-exact
+  random access); RTF ≤ 0.0007, streamed rendering is O(window) memory.
+- Selected representation: theta-AM gamma (depth err 0.0000 on build and
+  held-out fixtures through real i16 PCM; the phase-coupled PM and adaptive
+  carriers REJECTED, preserved). Real-audio class map + playback robustness
+  matrix (15 supported / 1 degraded / 0 failed; real AAC-LC and MP3
+  transcodes) and the security/performance qualifications in
+  `docs/neuro-overlay-*.md`; record: `docs/neuro-overlay-research.md`.
+
 ### Research foundation (measured on wire v7 during this cycle; integrated by the sections above)
 
 

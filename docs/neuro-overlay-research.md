@@ -291,3 +291,45 @@ and index-based random access (bit-exact seek, measured in N22).
 **Exit gate: PASS** — documented byte-level grammar with exact wire
 accounting, measured compatibility tests (the appended-descriptor
 rejection), and the architectural decision record.
+
+---
+
+## N27 — Final qualification board (N19–N26)
+
+| gate | disposition | basis |
+|---|---|---|
+| N19 — reference instrument | **PASS** | 15/15 rows; the instrument's own defects caught and fixed; negative controls all detected |
+| N20 — representation selection | **PASS** — theta-AM gamma SELECTED | depth/phase err 0.0000 on build AND holdout through real i16 PCM |
+| N20 — PM coupling | **REJECTED HYPOTHESIS** | carrier displacement, constant envelope, unrecoverable by the standard demodulator |
+| N20 — adaptive carriers | **REJECTED (no evidence)** | the promotion policy's bar (beat the 0.0000-err fixed control) was never met or attempted without evidence |
+| N21 — real-audio corpus | **PASS WITH DOCUMENTED LIMITATION** | archival exactness verified by re-hashing; the class map records the narrowband-masking failures permanently |
+| N22 — playback robustness | **PASS WITH DOCUMENTED LIMITATION** | 15 supported / 1 degraded (the brickwall stress filter) / 0 failed; support is conditional on the tested signals/transformations/detectors |
+| N23 — ACAUX grammar + ADR | **PASS** | A0 sidecar selected (60/98 B); A1 rejected on measured v8 fail-closed termination; A2 deferred |
+| N24 — Rust implementation | **PASS** | Python↔Rust parity 11/11 bit-exact; blockwise/seek bit-exact; full 131+34 suite green on both profiles; golden v8 vectors byte-identical; **cross-arch runtime BLOCKED** (Rosetta absent; x86-64 binaries cross-compile only) |
+| N25 — API + CLI | **PASS** | parse/verify_binding/render_into + the four aux CLI commands, exercised end-to-end; the mixed-output identity contract enforced |
+| N26-A — security | **PASS** | the recomputed-CRC semantic battery; the validation-gap defect (duration-0 start bounds) found and fixed |
+| N26-B — performance | **PASS** | RTF ≤ 0.0007; constant-window memory (≈2.5 MB @ 60 s streamed); headroom policy block-independent |
+| N27 — qualification record | **PASS** | results.json + compatibility/security/performance docs + permanent sidecar goldens; publication HELD |
+| Release (merge/tag/publish) | **HELD** | pending explicit authorization |
+
+**Negative results preserved permanently** (never to be reopened in this
+ phase): PM phase-coupling; adaptive carriers; wire v8 appended extension.
+The N21 failure classes (narrowband maskers, 12–36% recovery) and the N22
+ conditional support remain prominently documented: a mathematical overlay
+ may be represented exactly yet be difficult to recover through a given
+ program masker — a physical signal-delivery limitation, not a codec,
+ sidecar, or renderer defect.
+
+**Test accounting at qualification**: 131 core + 34 corpus-gated tests on
+ debug AND release; the aux suite (13 tests) inside that count; the wire v8
+ vectors (21) and the sidecar vectors (2) byte-identical; clippy 0; fmt
+ clean. Commands: `cargo test`, `cargo test --release`,
+ `cargo test --release -- n26_performance_qualification --ignored
+ --nocapture`, the four `acoustics aux …` CLI invocations.
+
+**The deliverable**: a complete audio recording remains byte-for-byte
+unchanged while a separate 60–98-byte mathematical sidecar supplies one or
+two reproducible, optionally coupled auxiliary streams rendered on demand —
+with no claim beyond signal-processing measurement.
+
+**Held**: merge to main, tag, publication — all separate authorizations.
