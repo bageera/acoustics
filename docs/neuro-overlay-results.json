@@ -58,7 +58,7 @@
   "primary_preservation": {
     "wire_v8_goldens_byte_identical": true,
     "full_suite": "131 core + 34 corpus-gated, green in debug AND release",
-    "corpus_reconciliation": "the G23 six-class gate re-run in the N24 background (piano rows reconciled byte-exact at time of writing)",
+    "corpus_reconciliation": "the G23 six-class reconciliation gate re-run during N24 verification: ALL 12 rows byte-exact (piano 1,102,429 / birds 35,754,394 / river 52,807,442 / speech1 42,895 / speech2 74,802 / speech3 366,881, both profiles, the frozen count-varint margins) — primary codec preservation proven against the full corpus",
     "note": "the unresolved 4 GB codec-encode target is untouched by the aux phase"
   },
   "dispositions": {
