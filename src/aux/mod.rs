@@ -13,13 +13,92 @@
 
 pub mod descriptor;
 pub mod limits;
+pub mod mix;
 pub mod render;
 pub mod wire;
 
 pub use descriptor::StreamDescriptor;
 pub use limits::*;
-pub use render::{render_window, stream_sample, ClampAudit};
+pub use mix::{mix_into_primary, stream_peak, MixReport, MIX_CEILING};
+pub use render::{render_window, step_u48, stream_sample, ClampAudit};
 pub use wire::{crc16_ccitt_false, AuxSpec};
+
+// ------------------------------------------------ public handle (N25) ----
+
+/// The user-facing auxiliary handle (N25): parse → verify_binding →
+/// render. Deliberately separate from the archival decoder; nothing here
+/// touches `decode_v8`/`decode_payload`.
+pub struct AuxHandle {
+    spec: AuxSpec,
+}
+
+/// The primary's validated dimensions, produced by `verify_binding`.
+#[derive(Clone, Copy, Debug)]
+pub struct PrimaryInfo {
+    pub rate: u32,
+    pub sample_count: u64,
+}
+
+/// Parse a `.acaux` sidecar (fail-closed, NO binding check yet).
+pub fn parse(bytes: &[u8]) -> Result<AuxHandle, String> {
+    Ok(AuxHandle {
+        spec: AuxSpec::parse(bytes, None)?,
+    })
+}
+
+impl AuxHandle {
+    /// The raw descriptor spec (already validated structurally).
+    pub fn spec(&self) -> &AuxSpec {
+        &self.spec
+    }
+
+    /// Verify the sidecar's 8-byte sha-256 binding against the PRIMARY
+    /// FILE bytes AND establish the render dimensions from the payload.
+    /// Accepts wire v8 and the historical v7 payload grammar.
+    pub fn verify_binding(&self, primary_file: &[u8]) -> Result<PrimaryInfo, String> {
+        let digest = crate::sha256::sha256(primary_file);
+        if digest[..8] != self.spec.binding {
+            return Err("aux binding: mismatched primary payload".to_string());
+        }
+        // dimensions: v8 first, then the historical v7 grammar
+        let dims = match crate::decode_v8(primary_file) {
+            Ok((rate, chans)) => (rate, chans.iter().map(|c| c.len()).sum()),
+            Err(_) => {
+                let (rate, samples, _) = crate::decode_payload(primary_file)?;
+                (rate, samples.len())
+            }
+        };
+        let info = PrimaryInfo {
+            rate: dims.0,
+            sample_count: dims.1 as u64,
+        };
+        self.spec
+            .validate_against_primary(info.rate, info.sample_count)?;
+        Ok(info)
+    }
+
+    /// Render this sidecar's auxiliary signal ALONE into `out` (mono,
+    /// routing-masked contributions summed) for the window
+    /// [offset, offset + out.len()). Requires `verify_binding` first.
+    pub fn render_into(
+        &self,
+        info: &PrimaryInfo,
+        offset: u64,
+        out: &mut [i16],
+    ) -> Result<ClampAudit, String> {
+        let mut chan = [vec![0i16; out.len()]];
+        let audit = render_window(
+            &self.spec,
+            info.rate,
+            info.sample_count,
+            offset,
+            out.len(),
+            &mut chan,
+        )?;
+        out.copy_from_slice(&chan[0]);
+        Ok(audit)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -314,5 +393,74 @@ mod tests {
         assert!(l
             .iter()
             .all(|&v| (i16::MIN as i64..=i16::MAX as i64).contains(&(v as i64))));
+    }
+
+    /// N25: the headroom policy — a loud primary forces the overlay scale
+    /// DOWN (never gain escalation), and the applied scale keeps the mix
+    /// inside the ceiling (block-size independent by construction: the
+    /// scale comes from the DECLARED peaks, not the window).
+    #[test]
+    fn aux_mix_headroom_policy_scales_down() {
+        let mut spec = two_stream_spec();
+        // Σ P_max well over the budget for a near-full primary
+        for s in &mut spec.streams {
+            s.amplitude_q15 = 32767;
+            s.mod_depth_q16 = 65535;
+        }
+        let rate = 48000u32;
+        let n = 2000usize;
+        let mut chans = vec![vec![0i16; n], vec![0i16; n]];
+        for c in &mut chans {
+            for v in c.iter_mut() {
+                *v = 31_000;
+            }
+        }
+        let report = mix_into_primary(&spec, rate, 8192, &mut chans).unwrap();
+        assert_eq!(report.primary_peak, 31_000);
+        assert!(report.combined_peak > MIX_CEILING - report.primary_peak);
+        assert!(report.scale_q16 < 65536, "must scale, not clip");
+        let max_after = chans
+            .iter()
+            .flat_map(|c| c.iter())
+            .map(|&v| (v as i64).abs())
+            .max()
+            .unwrap();
+        assert!(
+            max_after <= MIX_CEILING + 4,
+            "the scaled mix must hold the ceiling (got {max_after})"
+        );
+        assert_eq!(report.clamped, 0, "a policy-scaled mix never clips");
+    }
+
+    /// N25: with NO headroom the overlay is omitted entirely (scale 0) and
+    /// the primary samples pass through untouched.
+    #[test]
+    fn aux_mix_omits_when_no_headroom() {
+        let spec = two_stream_spec();
+        let rate = 48000u32;
+        let n = 100usize;
+        let mut chans = vec![vec![0i16; n], vec![0i16; n]];
+        for c in &mut chans {
+            for (i, v) in c.iter_mut().enumerate() {
+                *v = if i % 2 == 0 { 32_112 } else { -32_110 };
+            }
+        }
+        let before = chans.clone();
+        let report = mix_into_primary(&spec, rate, 8192, &mut chans).unwrap();
+        assert_eq!(report.scale_q16, 0, "no headroom -> omit");
+        assert_eq!(chans, before, "the primary is untouched at scale 0");
+        assert_eq!(report.clamped, 0);
+    }
+
+    /// N25: a binding mismatch must reject (the wrong payload).
+    #[test]
+    fn aux_binding_mismatch_rejects() {
+        let spec = two_stream_spec();
+        let handle = AuxHandle { spec };
+        let wrong = vec![0xEEu8; 512];
+        assert!(
+            handle.verify_binding(&wrong).is_err(),
+            "wrong payload rejects"
+        );
     }
 }
