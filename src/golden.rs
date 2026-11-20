@@ -93,6 +93,12 @@ fn sha256_hex(data: &[u8]) -> String {
     sha256(data).iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// The sha256 exposed for the aux subsystem's binding tests (cfg(test) only).
+#[cfg(test)]
+pub(crate) fn sha256_for_aux(data: &[u8]) -> [u8; 32] {
+    sha256(data)
+}
+
 // ------------------------------------------------------- fixture builders --
 
 /// LCG noise (64-bit linear congruential generator, fixed seed).

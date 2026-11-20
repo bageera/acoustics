@@ -67,7 +67,8 @@ offset size field
                            for that peak (the N20/N21 measured contract)
 10     4     mod_freq      millihertz u32; model 1 only: 100..=12_000 mHz
                            (0.1..=12 Hz); model 0: MUST be 0 (nonzero -> REJECT)
-14     2     mod_depth     Q16 (0..=65536 ⇒ depth 0..=1.0); model 0: MUST be 0
+14     2     mod_depth     Q16 (0..=65535 ⇒ depth = value/65536, at most
+                           0.99998); model 0: MUST be 0
 16     2     mod_phase     Q16 turns; model 0: MUST be 0
 18     8     start_sample  u64 LE; 0..=primary_sample_count (outside -> REJECT)
 26     8     duration      u64 LE samples; 0 = until the primary ends (the
@@ -100,7 +101,9 @@ normative render — platform float differences cannot touch the output.
   `v = TABLE[idx] + ((TABLE[idx+1] − TABLE[idx]) × frac) >> 14`, then
   `>> 14` scaled output as Q14.
 - AM envelope (the theta signal): the SAME table/accumulator arithmetic on
-  the mod fields; `env = 2^15 + (depth_q16 × theta_q14) >> 14` (Q15).
+  the mod fields; `env = 2^15 + (depth_q16 × theta_q14) >> 15` (Q15; the
+  depth term is a Q16⊗Q14 product right-shifted 15 so depth 0.5, theta +1
+  reads env = 49152 = 1.5 — N24's parity self-check pins this scale).
 - Sample output (per channel with the routing mask):
   `out = amplitude × v × env >> (14 + 15)` — an exact integer in
   Q14×Q15 arithmetic; the result is in [-32768, 32767] integer PCM units

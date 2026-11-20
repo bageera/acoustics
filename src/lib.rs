@@ -44,6 +44,11 @@ pub mod g8;
 #[cfg(test)]
 pub(crate) mod g9;
 
+/// The Mathematical Auxiliary Stream subsystem (the v8.1 research phase):
+/// the fail-closed `.acaux` sidecar, the descriptor grammar and the
+/// pure-integer normative renderer. INDEPENDENT of the compression engine.
+pub mod aux;
+
 /// G23-E — permanent golden vectors (wire v8 + the historical pin).
 #[cfg(test)]
 pub(crate) mod golden;
