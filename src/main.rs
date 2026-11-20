@@ -5,9 +5,12 @@ use std::process;
 const USAGE: &str = "ACOUSTICS — Mathematical & Physics-Informed Audio Research Engine v0.1
 
 USAGE:
-    acoustics benchmark <input.wav> <output.acoust>   encode + print model/size stats
+    acoustics benchmark <input.wav> <output.acoust>   mono encode + stats (the G23-G path)
+    acoustics encode <input.wav> <output.acoust>      encode MONO OR STEREO (v8, Balanced);
+                                                      verifies per-channel PCM identity in-process
     acoustics decode <input.acoust> <output.wav>      decode exactly, write 16-bit WAV
-    acoustics info <input.acoust>                     describe a payload
+                                                      (v8 stereo/mono + historical payloads)
+    acoustics info <input.acoust>                     describe a payload (v8 or historical)
 
 Auxiliary mathematical streams (the .acaux research sidecar; NEVER
 mixed into archival decoding — decode reconstructs original PCM only):
@@ -33,6 +36,7 @@ fn main() {
     };
     let result = match (cmd, operands.len()) {
         ("benchmark", 2) => benchmark(&operands[0], &operands[1]),
+        ("encode", 2) => encode_cmd(&operands[0], &operands[1]),
         ("decode", 2) => decode_cmd(&operands[0], &operands[1]),
         ("info", 1) => info_cmd(&operands[0]),
         ("aux", 2) if operands[0] == "inspect" => aux_inspect(&operands[1]),
@@ -71,21 +75,84 @@ fn benchmark(in_path: &str, out_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// G24-E: the stereo/mono v8 encode command — the EXISTING library
+/// selection functions, no new codec arithmetic; verifies per-channel PCM
+/// identity in-process (decode-back, channel ordering preserved, the
+/// interleaved stream checked against the de-interleaved source).
+fn encode_cmd(in_path: &str, out_path: &str) -> Result<(), String> {
+    let wav = fs::read(in_path).map_err(|e| format!("read {in_path}: {e}"))?;
+    let (rate, chans) = acoustics::parse_wav_multichannel(&wav)?;
+    let t0 = std::time::Instant::now();
+    let payload = match chans.len() {
+        1 => acoustics::encode_v8_select_mono(rate, &chans[0], acoustics::V8Profile::Balanced)?,
+        2 => {
+            acoustics::encode_v8_select(rate, &chans[0], &chans[1], acoustics::V8Profile::Balanced)?
+        }
+        n => return Err(format!("{n}-channel input; 1 or 2 supported")),
+    };
+    let enc_ms = t0.elapsed().as_millis();
+    fs::write(out_path, &payload).map_err(|e| format!("write {out_path}: {e}"))?;
+    // in-process verification: decode-back, exact per channel AND interleaved
+    let (drate, dchans) = acoustics::decode_v8(&payload)?;
+    if drate != rate || dchans.len() != chans.len() {
+        return Err("encode verification: dimensions differ".to_string());
+    }
+    let pcm_bytes = chans.len() * chans[0].len() * 2;
+    let exact = (0..chans.len()).all(|c| dchans[c] == chans[c]);
+    if !exact {
+        return Err("encode verification: per-channel PCM mismatch".to_string());
+    }
+    let pct = (payload.len() as f64 / pcm_bytes as f64) * 100.0;
+    println!(
+        "encoded {}ch {} samples @ {rate} Hz -> {out_path} ({} bytes, {:.1}% of PCM, {enc_ms} ms) — decoded back EXACT per channel",
+        chans.len(),
+        chans[0].len(),
+        payload.len(),
+        pct
+    );
+    Ok(())
+}
+
+/// The historical/v8 decode dispatch (the public dispatcher keeps
+/// accepting the documented historical versions).
+fn wire_decode(payload: &[u8]) -> Result<(u32, Vec<Vec<i16>>), String> {
+    if payload.len() >= 9 && payload[8] == acoustics::V8_VERSION {
+        acoustics::decode_v8(payload)
+    } else {
+        let (rate, samples, _) = acoustics::decode_payload(payload)?;
+        Ok((rate, vec![samples]))
+    }
+}
+
 fn decode_cmd(in_path: &str, out_path: &str) -> Result<(), String> {
     let payload = fs::read(in_path).map_err(|e| format!("read {in_path}: {e}"))?;
-    let (rate, samples, model) = acoustics::decode_payload(&payload)?;
-    let wav = acoustics::write_wav(rate, &samples)?;
+    let (rate, chans) = wire_decode(&payload)?;
+    let wav = match chans.len() {
+        1 => acoustics::write_wav(rate, &chans[0])?,
+        2 => acoustics::write_wav_stereo(rate, &chans[0], &chans[1])?,
+        n => return Err(format!("{n}-channel payload; 1 or 2 supported")),
+    };
     fs::write(out_path, &wav).map_err(|e| format!("write {out_path}: {e}"))?;
     println!(
-        "decoded {} samples @ {rate} Hz ({}) -> {out_path} (exact)",
-        samples.len(),
-        model_name(&model)
+        "decoded {}ch {} samples @ {rate} Hz -> {out_path} (exact)",
+        chans.len(),
+        chans[0].len()
     );
     Ok(())
 }
 
 fn info_cmd(in_path: &str) -> Result<(), String> {
     let payload = fs::read(in_path).map_err(|e| format!("read {in_path}: {e}"))?;
+    if payload.len() >= 9 && payload[8] == acoustics::V8_VERSION {
+        let (rate, chans) = acoustics::decode_v8(&payload)?;
+        println!(
+            "{in_path}: wire v8, {} channel(s), {} samples @ {rate} Hz, {} bytes",
+            chans.len(),
+            chans[0].len(),
+            payload.len()
+        );
+        return Ok(());
+    }
     let (rate, samples, model) = acoustics::decode_payload(&payload)?;
     println!(
         "{in_path}: model {}, {} samples @ {rate} Hz, {} bytes",
