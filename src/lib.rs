@@ -44,6 +44,14 @@ pub mod g8;
 #[cfg(test)]
 pub(crate) mod g9;
 
+/// SHA-256 (std-only) — shared by the golden battery and the aux binding.
+pub(crate) mod sha256;
+
+/// The Mathematical Auxiliary Stream subsystem (the v8.1 research phase):
+/// the fail-closed `.acaux` sidecar, the descriptor grammar and the
+/// pure-integer normative renderer. INDEPENDENT of the compression engine.
+pub mod aux;
+
 /// G23-E — permanent golden vectors (wire v8 + the historical pin).
 #[cfg(test)]
 pub(crate) mod golden;
@@ -378,6 +386,36 @@ pub fn write_wav(sample_rate: u32, samples: &[i16]) -> Result<Vec<u8>, String> {
     out.extend_from_slice(&(data_len as u32).to_le_bytes());
     for s in samples {
         out.extend_from_slice(&s.to_le_bytes());
+    }
+    Ok(out)
+}
+
+/// 16-bit stereo WAV writer (the aux mix/render outputs).
+pub fn write_wav_stereo(sample_rate: u32, l: &[i16], r: &[i16]) -> Result<Vec<u8>, String> {
+    if sample_rate == 0 {
+        return Err("invalid sample rate".into());
+    }
+    if l.len() != r.len() {
+        return Err("stereo channels must be equal length".into());
+    }
+    let data_len = l.len() * 4;
+    let mut out = Vec::with_capacity(44 + data_len);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&((36 + data_len) as u32).to_le_bytes());
+    out.extend_from_slice(b"WAVE");
+    out.extend_from_slice(b"fmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    out.extend_from_slice(&2u16.to_le_bytes()); // stereo
+    out.extend_from_slice(&sample_rate.to_le_bytes());
+    out.extend_from_slice(&(sample_rate * 4).to_le_bytes());
+    out.extend_from_slice(&4u16.to_le_bytes());
+    out.extend_from_slice(&16u16.to_le_bytes());
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&(data_len as u32).to_le_bytes());
+    for (a, b) in l.iter().zip(r.iter()) {
+        out.extend_from_slice(&a.to_le_bytes());
+        out.extend_from_slice(&b.to_le_bytes());
     }
     Ok(out)
 }
@@ -3447,7 +3485,7 @@ pub fn arm_costs(samples: &[i16]) -> (usize, usize, usize, usize) {
 /// the test-registered global allocator, so tests can measure how many
 /// allocations a code path performs on its own thread.
 #[cfg(test)]
-mod alloc_meter {
+pub(crate) mod alloc_meter {
     use std::alloc::{GlobalAlloc, Layout};
     use std::cell::Cell;
 

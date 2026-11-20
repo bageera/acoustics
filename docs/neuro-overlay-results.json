@@ -1,0 +1,71 @@
+{
+  "phase": "v8.1-neuro (N19-N27)",
+  "branch": "v8.1-neuro",
+  "primary_wire": "v8 (unchanged)",
+  "selected_representation": {
+    "name": "theta-AM gamma",
+    "wire": ".acaux independent sidecar (architecture A0)",
+    "cost_bytes": { "single_stream_sidecar": 60, "dual_stream_sidecar": 98, "per_stream_descriptor": 38 },
+    "note": "The N20 43-B/stream comparator excluded framing and integrity; 60/98 B are the qualified description-cost baselines."
+  },
+  "recovered_parameters": {
+    "build_fixture": { "rate": 48000, "depth_err": 0.0, "phase_err": 0.0, "gamma_freq_err": 0.0, "theta_freq_err": 0.0 },
+    "heldout_fixture": { "rate": 44100, "depth_err": 0.0, "phase_err": 0.0, "gamma_freq_err": 0.0, "theta_freq_err": 0.0 }
+  },
+  "rejected": {
+    "phase_coupling_pm": "carrier line displaces 17.6 Hz; envelope constant; unrecoverable by the standard demodulator",
+    "adaptive_carriers": "no pre-existing evidence; fixed-carrier control recovered depth to 0.0000 error",
+    "wire_v8_appended_extension_A1": "the v8 decoder rejects every appended payload (fail-closed termination; measured 1/16/43/128 bytes)"
+  },
+  "real_audio_class_map": {
+    "succeeds": ["silence (100.0%)", "speech stereo (99.2%)", "speech mono (84.4%)", "solo piano (62.3%)", "sparse birds (99.2%)", "bass river HOLDOUT (100.0%)", "percussive HOLDOUT (100.7%)"],
+    "fails": ["pure tone (17.0%)", "harmonic mixture (36.2%)", "high-dynamic-range (12.1%)"],
+    "refused_by_policy": ["near-full-scale (no headroom; overlay omitted; 0 clipped)"]
+  },
+  "playback_robustness": {
+    "supported": 15, "degraded": 1, "failed": 0,
+    "degraded_row": "brickwall 8 kHz lowpass (57.6%; the constructed stress filter)",
+    "real_transcodes": ["AAC-LC 128k (afconvert)", "MP3 192k (ffmpeg)"],
+    "bit_exact": ["seek from arbitrary offsets", "blockwise-256 rendering", "30 s pause/resume"]
+  },
+  "security_battery": {
+    "semantic_mutations_with_recomputed_crc": 12,
+    "integrity_layer": ["crc16 mismatch", "declared length mismatch", "appended bytes", "full truncation sweep", "binding mismatch"],
+    "caller_buffer_bounds": "oversized windows REJECT (no slice panics)",
+    "defect_found_and_fixed": "validate_against_primary skipped start > primary_count for duration-0 streams (now unconditional)",
+    "binding_honesty": "the 8-byte sha-256 binding is file ASSOCIATION, not cryptographic authentication; CRC-16 detects accidental corruption, not deliberate modification"
+  },
+  "performance": {
+    "rtf_single_tone_48k": 0.0003, "rtf_uncoupled_dual_48k": 0.0007, "rtf_coupled_dual_48k": 0.0007,
+    "throughput_msamples_per_s": { "single_tone": 173.0, "uncoupled_dual": 69.5, "coupled_dual": 70.8 },
+    "block_latency_ns": { "64": 914, "128": 1820, "256": 3643, "512": 7403, "1024": 14537 },
+    "rates_tested": [8000, 44100, 48000, 96000, 192000],
+    "seek_latency_us_1024_window": [4, 33],
+    "streamed_60s_rss_kb": 2544,
+    "steady_state_allocations": "O(windows), not O(samples)",
+    "mix_policy": "combined peak sum(A*(1+d)) vs (0.98 FS - primary peak); scale down or omit; never gain-escalate; block-size independent by construction"
+  },
+  "parity": {
+    "python_rust_cases": 11,
+    "result": "bit-exact (rates 8k/44.1k/48k/192k, boundary frequencies, phase wraps, max depth, coupling, u64-boundary indices)",
+    "cross_arch": "all parity tests ran natively on ARM64 (aarch64); x86-64 binaries cross-compile clean; RUNTIME verification on a second arch requires Rosetta (not installed) or another machine — recorded BLOCKED, cross-compilation is NOT runtime evidence",
+    "debug_release": "the full suite green on BOTH profiles incl. extreme-legal-field rendering (debug overflow panics active)"
+  },
+  "golden_vectors": {
+    "wire_v8": 21, "sidecar": 2,
+    "note": "the sidecar goldens (60 B single stream, 98 B coupled dual) are generated through the Python reference and render bit-exact in Rust"
+  },
+  "primary_preservation": {
+    "wire_v8_goldens_byte_identical": true,
+    "full_suite": "131 core + 34 corpus-gated, green in debug AND release",
+    "corpus_reconciliation": "the G23 six-class reconciliation gate re-run during N24 verification: ALL 12 rows byte-exact (piano 1,102,429 / birds 35,754,394 / river 52,807,442 / speech1 42,895 / speech2 74,802 / speech3 366,881, both profiles, the frozen count-varint margins) — primary codec preservation proven against the full corpus",
+    "note": "the unresolved 4 GB codec-encode target is untouched by the aux phase"
+  },
+  "dispositions": {
+    "N19": "PASS", "N20": "PASS (theta-AM gamma selected)", "N21": "PASS (with the measured class map)",
+    "N22": "PASS WITH DOCUMENTED LIMITATION (the brickwall row; conditional support)", "N23": "PASS (A0 selected; A1 rejected on evidence; A2 deferred)",
+    "N24": "PASS (parity, preservation, both-profile suite; cross-arch runtime BLOCKED)", "N25": "PASS (API + CLI exercised end-to-end)",
+    "N26": "PASS (the semantic battery; one defect found and fixed)", "N27": "PASS (the qualification record; publication HELD)"
+  },
+  "held": ["main merge", "release tag", "crates.io publication"]
+}
